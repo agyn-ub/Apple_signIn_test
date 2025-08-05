@@ -1,0 +1,127 @@
+# Swift 6 Development Rules for Cursor IDE
+
+## Development Environment
+- DO NOT attempt to build, compile, or run the project
+- DO NOT use build commands like `swift build`, `xcodebuild`, or similar
+- User has Xcode installed and will handle all building and running
+- Focus only on code generation, modification, and suggestions
+- Provide code that compiles but leave building to the user in Xcode
+
+## Language Version & Features
+- Always use Swift 6.0 syntax and features
+- Leverage Swift 6's improved concurrency model with actor isolation
+- Use strict concurrency checking and data race safety features
+- Prefer Swift 6's enhanced macro system when applicable
+- Utilize new typed throws and improved error handling
+
+## Concurrency & Actor Model
+- Use `actor` types for shared mutable state management
+- Prefer `async`/`await` over completion handlers
+- Use `@MainActor` for UI-related code
+- Implement proper actor isolation with `isolated` parameters
+- Use `Sendable` protocol for types that cross actor boundaries
+- Avoid `@unchecked Sendable` unless absolutely necessary with clear documentation
+
+## Code Style & Conventions
+- Use 4 spaces for indentation (no tabs)
+- Prefer explicit type annotations for public APIs
+- Use trailing closure syntax when it improves readability
+- Follow Swift API Design Guidelines naming conventions
+- Use meaningful variable and function names
+- Prefer `guard` statements for early returns
+- Use `defer` for cleanup operations
+
+## Memory Management
+- Prefer value types (structs) over reference types (classes) when possible
+- Use `weak` and `unowned` references appropriately to avoid retain cycles
+- Be explicit about capture lists in closures: `[weak self]`, `[unowned self]`
+- Use `@escaping` closures only when necessary
+
+## Error Handling
+- Use Swift 6's typed throws for specific error types
+- Prefer `Result` type for asynchronous operations that can fail
+- Use `do-catch` blocks for error handling, not `try!` or `try?` in production code
+- Create custom error types conforming to `Error` protocol
+- Provide meaningful error messages and context
+
+## SwiftUI (if applicable)
+- Use SwiftUI 6.0 features and improvements
+- Prefer `@Observable` over `@ObservableObject` for Swift 6
+- Use `@State`, `@Binding`, and `@Environment` appropriately
+- Follow SwiftUI's declarative paradigm
+- Use proper view modifiers and avoid deeply nested views
+
+## UIKit Integration (if needed)
+- Use `@MainActor` for UIKit code
+- Properly bridge between SwiftUI and UIKit using representables
+- Follow UIKit best practices for view controller lifecycle
+
+## Testing
+- Write unit tests using XCTest framework
+- Use `@Test` macro for Swift 6 testing when available
+- Test async functions properly with `await`
+- Mock dependencies using protocols and dependency injection
+- Aim for high test coverage on business logic
+
+## Performance & Optimization
+- Use `lazy` properties when expensive computation can be deferred
+- Prefer value semantics and copy-on-write for collections
+- Use `inout` parameters to avoid unnecessary copies
+- Consider using `some` and `any` keywords appropriately for existential types
+- Profile performance-critical code paths
+
+## Documentation
+- Use Swift DocC for documentation generation
+- Write comprehensive documentation comments for public APIs
+- Use `///` for documentation comments, `//` for inline comments
+- Include code examples in documentation when helpful
+- Document throwing functions and their possible errors
+
+## Package Management
+- Use Swift Package Manager (SPM) for dependencies
+- Keep Package.swift file clean and well-organized
+- Specify appropriate platform deployment targets
+- Use semantic versioning for package releases
+
+## Architecture Patterns
+- Follow MVVM or similar architectural patterns for SwiftUI
+- Use dependency injection for testability
+- Separate business logic from UI logic
+- Create reusable components and utilities
+- Follow SOLID principles where applicable
+
+## File Organization
+- Use meaningful file and folder names
+- Group related functionality together
+- Keep files focused on single responsibilities
+- Use extensions to organize code by functionality
+- Follow Xcode project organization conventions
+
+## Security & Privacy
+- Use keychain for sensitive data storage
+- Implement proper input validation
+- Follow Apple's security guidelines
+- Be mindful of data privacy and user permissions
+- Use secure coding practices
+
+## Specific Swift 6 Features to Leverage
+- Use improved string interpolation features
+- Leverage enhanced generics and associated types
+- Use parameter packs where appropriate
+- Take advantage of improved type inference
+- Use new control flow features and pattern matching improvements
+
+## Code Review & Quality
+- Ensure code compiles without warnings
+- Run SwiftLint for style consistency
+- Use static analysis tools
+- Follow code review best practices
+- Maintain consistent formatting throughout the project
+
+## Platform-Specific Guidelines
+- For iOS: Follow iOS Human Interface Guidelines
+- For macOS: Implement proper menu bar and window management
+- For watchOS: Focus on glanceable information and simple interactions
+- For tvOS: Design for the living room experience
+
+Remember to adapt these rules based on your specific project requirements and team preferences.
