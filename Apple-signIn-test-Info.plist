@@ -14,6 +14,16 @@
 				<string>com.googleusercontent.apps.73003602008-0jgk8u5h4s4pdu3010utqovs0kb14fgb</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>voicecalendly.oauth</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>voicecalendly</string>
+			</array>
+		</dict>
 	</array>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>This app needs microphone access to record voice commands for calendar operations.</string>

@@ -260,21 +260,60 @@ class GoogleCalendarManager: ObservableObject {
     private func callGoogleSignInFirebaseFunction(user: GIDGoogleUser, result: GIDSignInResult?) {
         guard let userId = Auth.auth().currentUser?.uid else { 
             logger.error("No Firebase user ID available for token storage")
+            errorMessage = "Authentication error: No user ID available"
+            syncStatus = "Authentication failed"
             return 
         }
         
         logger.info("Storing Google tokens on server for user: \(userId)")
         isLoading = true
         syncStatus = "Storing tokens on server..."
+        errorMessage = nil
+        
+        // Validate user profile data
+        guard let email = user.profile?.email, !email.isEmpty else {
+            logger.error("No email available from Google profile")
+            errorMessage = "Google profile missing email address"
+            syncStatus = "Profile validation failed"
+            isLoading = false
+            return
+        }
         
         // Prepare complete token data for Firebase function
         var tokenData: [String: Any] = [
             "userId": userId,
-            "email": user.profile?.email ?? "",
-            "name": user.profile?.name ?? ""
+            "email": email,
+            "name": user.profile?.name ?? "Unknown User"
         ]
         
-        // Add available tokens
+        // Validate and add tokens
+        let accessToken = user.accessToken.tokenString
+        let refreshToken = user.refreshToken.tokenString
+        
+        if accessToken.isEmpty {
+            logger.error("Access token is empty")
+            errorMessage = "Invalid access token from Google"
+            syncStatus = "Token validation failed"
+            isLoading = false
+            return
+        }
+        
+        if refreshToken.isEmpty {
+            logger.error("Refresh token is empty")
+            errorMessage = "Invalid refresh token from Google"
+            syncStatus = "Token validation failed"
+            isLoading = false
+            return
+        }
+        
+        tokenData["accessToken"] = accessToken
+        tokenData["refreshToken"] = refreshToken
+        
+        // Add token expiry information
+        let expiryDate = user.accessToken.expirationDate
+        logger.info("Access token expires at: \(expiryDate?.description ?? "unknown")")
+        
+        // Add available optional tokens
         if let idToken = user.idToken?.tokenString {
             tokenData["googleIdToken"] = idToken
             logger.info("ID token available")
@@ -282,25 +321,20 @@ class GoogleCalendarManager: ObservableObject {
             logger.warning("No ID token available")
         }
         
-        let accessToken = user.accessToken.tokenString
-        tokenData["accessToken"] = accessToken
-        logger.info("Access token available")
-        
-        // Refresh token is always available after successful sign-in
-        let refreshToken = user.refreshToken.tokenString
-        tokenData["refreshToken"] = refreshToken
-        logger.info("Refresh token available")
-        
-        // Try server auth code first, then fallback to direct tokens
+        // Add server auth code if available
         if let authCode = result?.serverAuthCode {
             tokenData["authCode"] = authCode
             logger.info("Server auth code available")
-            storeTokensOnServer(tokenData: tokenData)
         } else {
             logger.warning("No server auth code available, using direct tokens")
-            // Use direct tokens if auth code not available
-            storeTokensOnServer(tokenData: tokenData)
         }
+        
+        // Log granted scopes for debugging
+        let grantedScopes = user.grantedScopes ?? []
+        logger.info("Granted scopes: \(grantedScopes)")
+        
+        // Store tokens on server
+        storeTokensOnServer(tokenData: tokenData)
     }
 
     // 5. Store Tokens on Server with Enhanced Data
@@ -309,27 +343,90 @@ class GoogleCalendarManager: ObservableObject {
         
         Task {
             do {
-                let result = try await callFirebaseFunction(name: "storeGoogleCalendarAuth", parameters: tokenData)
+                // Prepare parameters that match the backend function expectations
+                var backendParameters: [String: Any] = [:]
+                
+                // Extract required parameters for backend
+                if let accessToken = tokenData["accessToken"] as? String {
+                    backendParameters["accessToken"] = accessToken
+                }
+                
+                if let refreshToken = tokenData["refreshToken"] as? String {
+                    backendParameters["refreshToken"] = refreshToken
+                }
+                
+                if let name = tokenData["name"] as? String {
+                    backendParameters["name"] = name
+                }
+                
+                if let email = tokenData["email"] as? String {
+                    backendParameters["email"] = email
+                }
+                
+                // Add expiry date - get from Google access token if available
+                if let currentUser = GIDSignIn.sharedInstance.currentUser {
+                    let expiryDate = currentUser.accessToken.expirationDate
+                    if let expiryDate = expiryDate {
+                        backendParameters["expiryDate"] = expiryDate.timeIntervalSince1970 * 1000 // Convert to milliseconds
+                        logger.info("Access token expires at: \(expiryDate.description)")
+                    } else {
+                        logger.info("Access token expiry date not available")
+                    }
+                }
+                
+                // Add scopes
+                backendParameters["scopes"] = calendarScopes
+                
+                logger.info("Sending backend parameters: \(backendParameters.keys)")
+                
+                let result = try await callFirebaseFunction(name: "storeGoogleCalendarAuth", parameters: backendParameters)
                 logger.info("Store tokens response: \(String(describing: result))")
                 
-                if let success = result["success"] as? Bool, success {
-                    logger.info("Calendar tokens stored successfully")
-                    isConnected = true
-                    syncStatus = "Calendar connected successfully"
-                    errorMessage = nil
-                    
-                    // Verify the connection immediately after storing
-                    await checkServerStoredAuth()
-                } else {
-                    let message = result["message"] as? String ?? "Failed to store calendar tokens on server"
-                    logger.error("Failed to store tokens: \(message)")
-                    
-                    // Check if server requires OAuth flow
-                    if checkAndHandleServerOAuth(data: result) {
-                        // OAuth flow is being handled
-                        return
+                // Handle the structured response from the backend
+                if let success = result["success"] as? Bool {
+                    if success {
+                        logger.info("Calendar tokens stored successfully")
+                        
+                        // Log additional success details
+                        if let tokenPath = result["tokenPath"] as? String {
+                            logger.info("Tokens stored at path: \(tokenPath)")
+                        }
+                        
+                        if let expiryDate = result["expiryDate"] as? Double {
+                            let expiry = Date(timeIntervalSince1970: expiryDate / 1000)
+                            logger.info("Token expires at: \(expiry)")
+                        }
+                        
+                        isConnected = true
+                        syncStatus = "Calendar connected successfully"
+                        errorMessage = nil
+                        
+                        // Verify the connection immediately after storing
+                        await checkServerStoredAuth()
+                    } else {
+                        // Backend returned structured error response
+                        let message = result["message"] as? String ?? "Failed to store calendar tokens on server"
+                        let error = result["error"] as? String
+                        
+                        logger.error("Backend returned error - Message: \(message)")
+                        if let error = error {
+                            logger.error("Backend error details: \(error)")
+                        }
+                        
+                        // Check if server requires OAuth flow
+                        if checkAndHandleServerOAuth(data: result) {
+                            // OAuth flow is being handled
+                            return
+                        }
+                        
+                        errorMessage = message
+                        isConnected = false
+                        syncStatus = "Token storage failed"
                     }
-                    
+                } else {
+                    // Unexpected response format
+                    logger.error("Unexpected response format from backend")
+                    let message = result["message"] as? String ?? "Unexpected response from server"
                     errorMessage = message
                     isConnected = false
                     syncStatus = "Token storage failed"
@@ -406,35 +503,21 @@ class GoogleCalendarManager: ObservableObject {
         }
     }
 
-    // Handle server-side OAuth flow when needed
-    private func handleServerOAuthFlow(authUrl: String) {
-        logger.info("Handling server-side OAuth flow")
-        
-        guard let url = URL(string: authUrl) else {
-            logger.error("Invalid auth URL: \(authUrl)")
-            errorMessage = "Invalid authentication URL"
-            return
-        }
-        
-        // Open the auth URL in Safari/WebView
-        DispatchQueue.main.async {
-            UIApplication.shared.open(url) { success in
-                if success {
-                    self.logger.info("Opened auth URL in browser")
-                    self.syncStatus = "Please complete authentication in browser"
-                } else {
-                    self.logger.error("Failed to open auth URL")
-                    self.errorMessage = "Failed to open authentication URL"
-                }
-            }
-        }
-    }
+    // REMOVED: This function was causing iOS security issues
+    // We now use native Google Sign-In SDK instead of web OAuth flow
+    // private func handleServerOAuthFlow(authUrl: String) {
+    //     // This was trying to open web URLs in Safari - causes security errors
+    // }
     
     // Check if we need to handle server-side OAuth
     private func checkAndHandleServerOAuth(data: [String: Any]) -> Bool {
         if let authUrl = data["authUrl"] as? String {
-            logger.info("Server requires OAuth flow, auth URL: \(authUrl)")
-            handleServerOAuthFlow(authUrl: authUrl)
+            logger.info("Server requires OAuth flow, using native Google Sign-In instead of web flow")
+            
+            // Instead of opening web URL, use native Google Sign-In
+            DispatchQueue.main.async {
+                self.signInWithGoogleForCalendar()
+            }
             return true
         }
         return false
