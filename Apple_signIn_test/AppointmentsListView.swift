@@ -129,11 +129,13 @@ struct AppointmentRowView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(appointment.title)
+                    // Display title with fallback handling
+                    Text(displayTitle)
                         .font(.headline)
                         .lineLimit(2)
                     
-                    Text(appointment.time)
+                    // Display time with better formatting
+                    Text(displayTime)
                         .font(.subheadline)
                         .foregroundColor(.blue)
                 }
@@ -146,20 +148,24 @@ struct AppointmentRowView: View {
                 }
             }
             
-            if let duration = appointment.duration {
+            if let duration = appointment.duration, duration > 0 {
                 Text("\(duration) minutes")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
             
+            // Show attendees only if they exist and aren't empty
             if let attendees = appointment.attendees, !attendees.isEmpty {
-                Text("With: \(attendees.joined(separator: ", "))")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
+                let validAttendees = attendees.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                if !validAttendees.isEmpty {
+                    Text("With: \(validAttendees.joined(separator: ", "))")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
             }
             
-            if let location = appointment.location {
+            if let location = appointment.location, !location.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 HStack {
                     Image(systemName: "location")
                         .font(.caption)
@@ -170,6 +176,22 @@ struct AppointmentRowView: View {
             }
         }
         .padding(.vertical, 4)
+    }
+    
+    private var displayTitle: String {
+        let trimmedTitle = appointment.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedTitle.isEmpty {
+            return "Untitled Appointment"
+        }
+        return trimmedTitle
+    }
+    
+    private var displayTime: String {
+        let trimmedTime = appointment.time.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedTime.isEmpty {
+            return "Time not specified"
+        }
+        return trimmedTime
     }
 }
 
@@ -184,21 +206,21 @@ struct AppointmentDetailView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     // Title and basic info
                     VStack(alignment: .leading, spacing: 8) {
-                        Text(appointment.title)
+                        Text(displayTitle)
                             .font(.title)
                             .fontWeight(.bold)
                         
                         HStack {
                             Image(systemName: "calendar")
-                            Text(formatFullDate(appointment.date))
+                            Text(displayDate)
                                 .font(.subheadline)
                         }
                         .foregroundColor(.secondary)
                         
                         HStack {
                             Image(systemName: "clock")
-                            Text(appointment.time)
-                            if let duration = appointment.duration {
+                            Text(displayTime)
+                            if let duration = appointment.duration, duration > 0 {
                                 Text("(\(duration) minutes)")
                             }
                         }
@@ -208,26 +230,29 @@ struct AppointmentDetailView: View {
                     
                     Divider()
                     
-                    // Attendees
+                    // Attendees - only show if there are valid attendees
                     if let attendees = appointment.attendees, !attendees.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Attendees")
-                                .font(.headline)
-                            
-                            ForEach(attendees, id: \.self) { attendee in
-                                HStack {
-                                    Image(systemName: "person")
-                                    Text(attendee)
+                        let validAttendees = attendees.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                        if !validAttendees.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Attendees")
+                                    .font(.headline)
+                                
+                                ForEach(validAttendees, id: \.self) { attendee in
+                                    HStack {
+                                        Image(systemName: "person")
+                                        Text(attendee)
+                                    }
+                                    .font(.subheadline)
                                 }
-                                .font(.subheadline)
                             }
+                            
+                            Divider()
                         }
-                        
-                        Divider()
                     }
                     
-                    // Location
-                    if let location = appointment.location {
+                    // Location - only show if not empty
+                    if let location = appointment.location, !location.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Location")
                                 .font(.headline)
@@ -242,8 +267,8 @@ struct AppointmentDetailView: View {
                         Divider()
                     }
                     
-                    // Description
-                    if let description = appointment.description {
+                    // Description - only show if not empty
+                    if let description = appointment.description, !description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Description")
                                 .font(.headline)
@@ -255,8 +280,10 @@ struct AppointmentDetailView: View {
                         Divider()
                     }
                     
-                    // Meeting link
-                    if let meetingLink = appointment.meetingLink {
+                    // Meeting link - only show if not empty and is a valid URL
+                    if let meetingLink = appointment.meetingLink, 
+                       !meetingLink.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                       URL(string: meetingLink) != nil {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Meeting Link")
                                 .font(.headline)
@@ -296,17 +323,42 @@ struct AppointmentDetailView: View {
         }
     }
     
+    private var displayTitle: String {
+        let trimmedTitle = appointment.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedTitle.isEmpty {
+            return "Untitled Appointment"
+        }
+        return trimmedTitle
+    }
+    
+    private var displayTime: String {
+        let trimmedTime = appointment.time.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedTime.isEmpty {
+            return "Time not specified"
+        }
+        return trimmedTime
+    }
+    
+    private var displayDate: String {
+        return formatFullDate(appointment.date)
+    }
+    
     private func formatFullDate(_ dateString: String) -> String {
+        let trimmedDate = dateString.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedDate.isEmpty {
+            return "Date not specified"
+        }
+        
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
         
-        if let date = formatter.date(from: dateString) {
+        if let date = formatter.date(from: trimmedDate) {
             let displayFormatter = DateFormatter()
             displayFormatter.dateStyle = .full
             return displayFormatter.string(from: date)
         }
         
-        return dateString
+        return trimmedDate
     }
 }
 
