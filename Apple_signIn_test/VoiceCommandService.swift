@@ -113,7 +113,8 @@ class VoiceCommandService: ObservableObject {
         
         // Prepare data for Firebase callable function
         let data: [String: Any] = [
-            "command": command
+            "command": command,
+            "timezone": TimeZone.current.identifier
         ]
         
         logger.info("Function data: \(data)")
