@@ -61,10 +61,27 @@ class VoiceCommandService: ObservableObject {
                 return
             }
             
+            // Validate Firebase Auth token before making function call
+            do {
+                let tokenResult = try await currentUser.getIDTokenResult(forcingRefresh: false)
+                let now = Date()
+                
+                // Check if token expires within next 5 minutes (300 seconds)
+                if tokenResult.expirationDate.timeIntervalSince(now) < 300 {
+                    logger.info("Firebase token expires soon, refreshing...")
+                    _ = try await currentUser.getIDTokenResult(forcingRefresh: true)
+                    logger.info("Firebase token refreshed successfully")
+                }
+            } catch {
+                logger.error("Firebase token validation failed: \(error.localizedDescription)")
+                errorMessage = "Authentication session expired. Please sign in again."
+                return
+            }
+            
             logger.info("Current user authenticated: \(currentUser.uid)")
             logger.info("Calling Firebase function with command: '\(trimmedCommand)'")
             
-            let response = try await callFirebaseFunction(command: trimmedCommand)
+            let response = try await callFirebaseFunctionWithRetry(command: trimmedCommand)
             logger.info("Voice command response: success=\(response.success), message='\(response.message)'")
             
             lastResponse = response
@@ -108,6 +125,49 @@ class VoiceCommandService: ObservableObject {
         logger.info("Command processing completed")
     }
     
+    private func callFirebaseFunctionWithRetry(command: String, maxRetries: Int = 2) async throws -> VoiceCommandResponse {
+        var lastError: Error?
+        
+        for attempt in 1...maxRetries {
+            do {
+                return try await callFirebaseFunction(command: command)
+            } catch {
+                lastError = error
+                logger.warning("Firebase function call attempt \(attempt) failed: \(error.localizedDescription)")
+                
+                // Check if it's an authentication error that we should retry
+                if let functions_error = error as NSError?, 
+                   functions_error.domain == "FIRFunctionsErrorDomain",
+                   functions_error.code == 16 { // UNAUTHENTICATED
+                    
+                    if attempt < maxRetries {
+                        logger.info("Authentication error detected, refreshing token and retrying...")
+                        
+                        // Try to refresh Firebase Auth token
+                        if let currentUser = Auth.auth().currentUser {
+                            do {
+                                _ = try await currentUser.getIDTokenResult(forcingRefresh: true)
+                                logger.info("Token refreshed for retry attempt \(attempt + 1)")
+                                continue // Retry the call
+                            } catch {
+                                logger.error("Token refresh failed: \(error.localizedDescription)")
+                            }
+                        }
+                    }
+                }
+                
+                // For other errors, don't retry
+                if attempt >= maxRetries {
+                    break
+                }
+            }
+        }
+        
+        // If we get here, all retries failed
+        throw lastError ?? NSError(domain: "VoiceCommandServiceError", code: -1, 
+                                  userInfo: [NSLocalizedDescriptionKey: "All retry attempts failed"])
+    }
+    
     private func callFirebaseFunction(command: String) async throws -> VoiceCommandResponse {
         logger.info("Calling Firebase callable function: processVoiceCommand")
         
@@ -145,9 +205,9 @@ class VoiceCommandService: ObservableObject {
         // Parse appointment data if present
         var appointmentData: AppointmentData? = nil
         if let appointmentDict = responseData["appointment"] as? [String: Any] {
-            // Convert appointment dictionary to AppointmentData
+            // Convert appointment dictionary to AppointmentData with better fallback handling
             let id = appointmentDict["id"] as? String ?? ""
-            let title = appointmentDict["title"] as? String ?? ""
+            let rawTitle = appointmentDict["title"] as? String ?? ""
             let date = appointmentDict["date"] as? String ?? ""
             let time = appointmentDict["time"] as? String ?? ""
             let duration = appointmentDict["duration"] as? Int
@@ -156,16 +216,34 @@ class VoiceCommandService: ObservableObject {
             let location = appointmentDict["location"] as? String
             let description = appointmentDict["description"] as? String
             
+            // Generate fallback title if empty or missing
+            let title: String
+            if rawTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if let validAttendees = attendees?.filter({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }), !validAttendees.isEmpty {
+                    if validAttendees.count == 1 {
+                        title = "Meeting with \(validAttendees[0])"
+                    } else if validAttendees.count == 2 {
+                        title = "Meeting with \(validAttendees.joined(separator: " and "))"
+                    } else {
+                        title = "Meeting with \(validAttendees[0]) and \(validAttendees.count - 1) others"
+                    }
+                } else {
+                    title = time.isEmpty ? "Appointment" : "Appointment at \(time)"
+                }
+            } else {
+                title = rawTitle
+            }
+            
             appointmentData = AppointmentData(
                 id: id,
                 title: title,
                 date: date,
                 time: time,
                 duration: duration,
-                attendees: attendees,
-                meetingLink: meetingLink,
-                location: location,
-                description: description
+                attendees: attendees?.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }, // Filter out empty attendees
+                meetingLink: meetingLink?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true ? nil : meetingLink,
+                location: location?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true ? nil : location,
+                description: description?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true ? nil : description
             )
         }
         

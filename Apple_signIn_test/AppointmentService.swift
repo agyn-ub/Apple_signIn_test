@@ -29,23 +29,46 @@ class AppointmentService: ObservableObject {
         do {
             let snapshot = try await db.collection("users").document(userId).collection("appointments").getDocuments()
             
-            let fetchedAppointments = try snapshot.documents.map { document in
-                let appointmentData = try document.data(as: AppointmentData.self)
-                // Ensure the document ID is set
-                if appointmentData.id.isEmpty {
+            let fetchedAppointments = try snapshot.documents.compactMap { document -> AppointmentData? in
+                do {
+                    let appointmentData = try document.data(as: AppointmentData.self)
+                    
+                    // Generate fallback title if empty or missing
+                    let finalTitle: String
+                    if appointmentData.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        if let validAttendees = appointmentData.attendees?.filter({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }), !validAttendees.isEmpty {
+                            if validAttendees.count == 1 {
+                                finalTitle = "Meeting with \(validAttendees[0])"
+                            } else if validAttendees.count == 2 {
+                                finalTitle = "Meeting with \(validAttendees.joined(separator: " and "))"
+                            } else {
+                                finalTitle = "Meeting with \(validAttendees[0]) and \(validAttendees.count - 1) others"
+                            }
+                        } else {
+                            finalTitle = appointmentData.time.isEmpty ? "Appointment" : "Appointment at \(appointmentData.time)"
+                        }
+                    } else {
+                        finalTitle = appointmentData.title
+                    }
+                    
+                    // Clean up attendees list
+                    let cleanAttendees = appointmentData.attendees?.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                    
                     return AppointmentData(
-                        id: document.documentID,
-                        title: appointmentData.title,
+                        id: appointmentData.id.isEmpty ? document.documentID : appointmentData.id,
+                        title: finalTitle,
                         date: appointmentData.date,
                         time: appointmentData.time,
                         duration: appointmentData.duration,
-                        attendees: appointmentData.attendees,
-                        meetingLink: appointmentData.meetingLink,
-                        location: appointmentData.location,
-                        description: appointmentData.description
+                        attendees: cleanAttendees?.isEmpty == true ? nil : cleanAttendees,
+                        meetingLink: appointmentData.meetingLink?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true ? nil : appointmentData.meetingLink,
+                        location: appointmentData.location?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true ? nil : appointmentData.location,
+                        description: appointmentData.description?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true ? nil : appointmentData.description
                     )
+                } catch {
+                    errorMessage = "Failed to parse appointment data: \(error.localizedDescription)"
+                    return nil
                 }
-                return appointmentData
             }
             
             appointments = fetchedAppointments.sorted { appointment1, appointment2 in

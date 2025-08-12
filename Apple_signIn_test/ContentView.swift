@@ -12,20 +12,35 @@ import GoogleSignIn
 struct ContentView: View {
     @StateObject private var authManager = AuthenticationManager()
     @StateObject private var calendarManager = GoogleCalendarManager()
+    @Environment(\.scenePhase) private var scenePhase
     
     var body: some View {
-        if authManager.isSignedIn {
-            // Show the main Voice Calendar interface when signed in
-            VoiceCalendarView()
-                .environmentObject(authManager)
-                .environmentObject(calendarManager)
-                .onAppear {
-                    // Connect the managers
-                    authManager.calendarManager = calendarManager
+        Group {
+            if authManager.isSignedIn {
+                // Show the main Voice Calendar interface when signed in
+                VoiceCalendarView()
+                    .environmentObject(authManager)
+                    .environmentObject(calendarManager)
+                    .onAppear {
+                        // Connect the managers
+                        authManager.calendarManager = calendarManager
+                    }
+            } else {
+                // Show sign in view when not authenticated
+                SignInView(authManager: authManager, calendarManager: calendarManager)
+            }
+        }
+        .onChange(of: scenePhase) { phase in
+            if phase == .active && authManager.isSignedIn {
+                // Update activity and check for timeout
+                authManager.updateActivity()
+                authManager.handleSessionTimeout()
+                
+                // Re-validate session when app becomes active after being in background
+                Task {
+                    await authManager.validateSessionOnResume()
                 }
-        } else {
-            // Show sign in view when not authenticated
-            SignInView(authManager: authManager, calendarManager: calendarManager)
+            }
         }
     }
 }

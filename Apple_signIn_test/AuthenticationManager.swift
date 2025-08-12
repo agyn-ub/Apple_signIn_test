@@ -20,8 +20,12 @@ class AuthenticationManager: NSObject, ObservableObject {
     @Published var isLoading = false
     @Published var errorMessage: String?
     @Published var linkedProviders: [String] = []
+    @Published var sessionExpired = false
     
     private var currentNonce: String? // For Apple Sign In security
+    private var lastActivityTime = Date()
+    private let sessionTimeoutInterval: TimeInterval = 3600 // 1 hour
+    private var isCheckingSession = false // Prevent concurrent session checks
     weak var calendarManager: GoogleCalendarManager?
     
     override init() {
@@ -282,6 +286,12 @@ class AuthenticationManager: NSObject, ObservableObject {
             return
         }
         
+        // Prevent multiple simultaneous calendar checks during startup
+        guard !isCheckingSession else {
+            print("Session validation in progress, deferring calendar check...")
+            return
+        }
+        
         // First check if calendar is already connected
         await calendarManager.checkServerStoredAuth()
         
@@ -363,6 +373,84 @@ class AuthenticationManager: NSObject, ObservableObject {
     // Clear error message
     func clearError() {
         errorMessage = nil
+    }
+    
+    // Validate session when app resumes from background
+    @MainActor
+    func validateSessionOnResume() async {
+        // Prevent concurrent session checks
+        guard !isCheckingSession else {
+            print("Session validation already in progress, skipping...")
+            return
+        }
+        
+        guard let currentUser = Auth.auth().currentUser else {
+            // User is no longer authenticated
+            self.user = nil
+            self.isSignedIn = false
+            self.linkedProviders = []
+            return
+        }
+        
+        isCheckingSession = true
+        defer { isCheckingSession = false }
+        
+        do {
+            // Check if Firebase Auth token is still valid
+            let tokenResult = try await currentUser.getIDTokenResult(forcingRefresh: false)
+            let now = Date()
+            
+            // If token expires within 10 minutes, refresh it
+            if tokenResult.expirationDate.timeIntervalSince(now) < 600 {
+                print("Firebase token expires soon on app resume, refreshing...")
+                _ = try await currentUser.getIDTokenResult(forcingRefresh: true)
+                print("Firebase token refreshed on app resume")
+            }
+            
+            // Re-verify calendar connection if we have Google provider
+            if linkedProviders.contains("google.com"), let calendarManager = self.calendarManager {
+                await calendarManager.checkServerStoredAuth()
+            }
+            
+        } catch {
+            print("Session validation failed on app resume: \(error.localizedDescription)")
+            // Don't immediately sign out - let user try to use the app
+            // They'll get an error and can re-authenticate if needed
+            self.errorMessage = "Session may have expired. If you encounter issues, please sign out and sign back in."
+        }
+    }
+    
+    // Update last activity time - call this when user interacts with the app
+    func updateActivity() {
+        lastActivityTime = Date()
+        if sessionExpired {
+            sessionExpired = false
+            errorMessage = nil
+        }
+    }
+    
+    // Check if session has timed out due to inactivity
+    func checkSessionTimeout() -> Bool {
+        let now = Date()
+        let timeSinceLastActivity = now.timeIntervalSince(lastActivityTime)
+        
+        if timeSinceLastActivity > sessionTimeoutInterval && isSignedIn {
+            sessionExpired = true
+            errorMessage = "Your session has expired due to inactivity. Please sign in again."
+            return true
+        }
+        return false
+    }
+    
+    // Handle session timeout with graceful re-authentication
+    @MainActor
+    func handleSessionTimeout() {
+        if checkSessionTimeout() {
+            // Don't immediately sign out - just mark as expired
+            // User can continue using cached data but will need to re-auth for server calls
+            sessionExpired = true
+            print("Session expired due to inactivity")
+        }
     }
     
     // Helper method to call Firebase functions in a nonisolated context
