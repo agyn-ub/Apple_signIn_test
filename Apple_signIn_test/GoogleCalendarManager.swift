@@ -21,12 +21,38 @@ class GoogleCalendarManager: ObservableObject {
     
     // Debug logging
     private let logger = Logger(subsystem: "com.apple.signin.test", category: "GoogleCalendarManager")
+    
+    // Authentication state guards
+    private var isConnectingCalendar = false
+    private var lastConnectionAttempt: Date?
+    private var connectionAttempts = 0
+    private let maxConnectionAttempts = 3
+    private let baseCooldownSeconds: TimeInterval = 10
+    
+    // Calculate exponential backoff cooldown
+    private var connectionCooldownSeconds: TimeInterval {
+        return baseCooldownSeconds * pow(2.0, Double(connectionAttempts))
+    }
+    
+    // Reset connection state on success
+    private func resetConnectionState() {
+        connectionAttempts = 0
+        lastConnectionAttempt = nil
+        isConnectingCalendar = false
+    }
+    
+    // Public function to manually reset connection state (for UI recovery)
+    func resetConnectionAttempts() {
+        logger.info("Manually resetting connection attempts")
+        resetConnectionState()
+        errorMessage = nil
+        syncStatus = "Ready to connect"
+    }
 
     // Enhanced calendar scopes for complete access
+    // Calendar scopes are now handled by AuthenticationManager during Google Sign-In
     private let calendarScopes = [
-        "https://www.googleapis.com/auth/calendar.events",
-        "https://www.googleapis.com/auth/calendar.readonly",
-        "https://www.googleapis.com/auth/calendar"
+        "https://www.googleapis.com/auth/calendar.events"
     ]
 
     init() {
@@ -63,7 +89,7 @@ class GoogleCalendarManager: ObservableObject {
             let data = try await callFirebaseFunction(name: "checkGoogleCalendarAuth", parameters: ["userId": userId])
             logger.info("Server auth check response: \(String(describing: data))")
             
-            if let isAuthenticated = data["isAuthenticated"] as? Bool, isAuthenticated {
+            if let isAuthenticated = data["authenticated"] as? Bool, isAuthenticated {
                 logger.info("Calendar authentication successful")
                 isConnected = true
                 syncStatus = "Connected (server)"
@@ -71,6 +97,17 @@ class GoogleCalendarManager: ObservableObject {
             } else {
                 let message = data["message"] as? String ?? "Calendar access not available"
                 logger.warning("Calendar authentication failed: \(message)")
+                
+                // Check if tokens are expired and need re-authentication
+                if message.contains("expired") || message.contains("could not be refreshed") {
+                    logger.info("Google Calendar tokens expired, triggering re-authentication")
+                    syncStatus = "Authentication expired - reconnecting..."
+                    // Trigger re-authentication flow
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                        self.linkGoogleAccountAfterApple()
+                    }
+                    return
+                }
                 
                 // Check if server requires OAuth flow
                 if checkAndHandleServerOAuth(data: data) {
@@ -91,43 +128,36 @@ class GoogleCalendarManager: ObservableObject {
         isLoading = false
     }
 
-    // 1. Google SDK Implementation with Calendar Scopes
+    // Re-authenticate with Google Calendar when tokens expire
     func signInWithGoogleForCalendar() {
-        logger.info("Starting Google Sign-In for calendar")
+        logger.info("Initiating Google Calendar re-authentication")
         
-        guard let presentingViewController = UIApplication.shared.connectedScenes
-            .filter({$0.activationState == .foregroundActive})
-            .compactMap({$0 as? UIWindowScene})
-            .first?.windows
-            .filter({$0.isKeyWindow}).first?.rootViewController else {
-            logger.error("Unable to get presenting view controller")
-            errorMessage = "Unable to get presenting view controller"
+        // If already connected, just verify the connection
+        if isConnected {
+            Task {
+                await checkServerStoredAuth()
+            }
             return
         }
         
-        isLoading = true
+        // Otherwise trigger the full re-authentication flow
+        linkGoogleAccountAfterApple()
+    }
+    
+    // Public method to force re-authentication (useful for expired tokens)
+    func forceReauthentication() {
+        logger.info("Force re-authentication requested")
+        isConnected = false
         errorMessage = nil
-        syncStatus = "Starting Google Sign-In with Calendar access..."
-        
-        // Use the Google OAuth client ID from GoogleService-Info.plist
-        let clientID = "73003602008-0jgk8u5h4s4pdu3010utqovs0kb14fgb.apps.googleusercontent.com"
-        logger.info("Using client ID: \(clientID)")
-        
-        // Configure Google Sign-In with calendar scopes
-        let config = GIDConfiguration(clientID: clientID)
-        GIDSignIn.sharedInstance.configuration = config
-        
-        logger.info("Calendar scopes requested: \(self.calendarScopes)")
-        
-        // 2. Sign-In Flow: Call Google Sign-In with Calendar Scopes
-        GIDSignIn.sharedInstance.signIn(withPresenting: presentingViewController, hint: nil, additionalScopes: calendarScopes) { [weak self] result, error in
-            self?.handleGoogleSignInResult(result: result, error: error)
-        }
+        syncStatus = "Re-authenticating..."
+        linkGoogleAccountAfterApple()
     }
 
-    // 3. Handle Google Sign-In Result with Enhanced Token Management
+    // DEPRECATED: No longer needed - handled by AuthenticationManager
+    // private func handleGoogleSignInResult(result: GIDSignInResult?, error: Error?) {
     private func handleGoogleSignInResult(result: GIDSignInResult?, error: Error?) {
         isLoading = false
+        isConnectingCalendar = false // Clear connecting flag
         
         if let error = error {
             logger.error("Google Sign-In error: \(error.localizedDescription)")
@@ -190,6 +220,8 @@ class GoogleCalendarManager: ObservableObject {
         
         if hasCalendarAccess {
             logger.info("Calendar scopes granted successfully")
+            // Reset connection attempts on successful scope grant
+            resetConnectionState()
             // Successfully got calendar access - Call Firebase Function
             callGoogleSignInFirebaseFunction(user: user, result: result)
         } else {
@@ -397,6 +429,8 @@ class GoogleCalendarManager: ObservableObject {
                             logger.info("Token expires at: \(expiry)")
                         }
                         
+                        // Reset connection state on successful token storage
+                        resetConnectionState()
                         isConnected = true
                         syncStatus = "Calendar connected successfully"
                         errorMessage = nil
@@ -456,7 +490,7 @@ class GoogleCalendarManager: ObservableObject {
             let data = try await callFirebaseFunction(name: "checkGoogleCalendarAuth", parameters: ["userId": userId])
             logger.info("Calendar access check response: \(String(describing: data))")
             
-            if let isAuthenticated = data["isAuthenticated"] as? Bool, isAuthenticated {
+            if let isAuthenticated = data["authenticated"] as? Bool, isAuthenticated {
                 logger.info("Calendar access confirmed")
                 isConnected = true
                 syncStatus = "Google Calendar is connected and accessible"
@@ -464,6 +498,18 @@ class GoogleCalendarManager: ObservableObject {
             } else {
                 let message = data["message"] as? String ?? "Calendar access not available"
                 logger.warning("Calendar access denied: \(message)")
+                
+                // Check if tokens are expired and need re-authentication
+                if message.contains("expired") || message.contains("could not be refreshed") {
+                    logger.info("Google Calendar tokens expired during connection check, triggering re-authentication")
+                    syncStatus = "Authentication expired - reconnecting..."
+                    // Trigger re-authentication flow
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                        self.linkGoogleAccountAfterApple()
+                    }
+                    return
+                }
+                
                 isConnected = false
                 syncStatus = "Calendar not connected"
                 errorMessage = message
@@ -509,27 +555,65 @@ class GoogleCalendarManager: ObservableObject {
     //     // This was trying to open web URLs in Safari - causes security errors
     // }
     
-    // Check if we need to handle server-side OAuth
+    // Check if we need to handle server-side OAuth with loop prevention
     private func checkAndHandleServerOAuth(data: [String: Any]) -> Bool {
-        if let authUrl = data["authUrl"] as? String {
-            logger.info("Server requires OAuth flow, using native Google Sign-In instead of web flow")
-            
-            // Instead of opening web URL, use native Google Sign-In
-            DispatchQueue.main.async {
-                self.signInWithGoogleForCalendar()
-            }
+        guard data["authUrl"] as? String != nil else {
+            return false
+        }
+        
+        // Prevent recursive OAuth loops
+        if isConnectingCalendar {
+            logger.warning("Already connecting calendar, ignoring OAuth URL to prevent loop")
+            return true // Return true to indicate we handled it (by ignoring it)
+        }
+        
+        // Check if we've exceeded connection attempts
+        if connectionAttempts >= maxConnectionAttempts {
+            logger.error("Maximum connection attempts reached, not starting OAuth flow")
+            errorMessage = "Too many connection attempts. Please try again later."
+            syncStatus = "Connection failed"
             return true
         }
-        return false
+        
+        // Check cooldown period
+        if let lastAttempt = lastConnectionAttempt,
+           Date().timeIntervalSince(lastAttempt) < connectionCooldownSeconds {
+            logger.warning("Connection cooldown active, not starting OAuth flow")
+            return true
+        }
+        
+        logger.info("Server requires OAuth flow, using native Google Sign-In (attempt \(self.connectionAttempts + 1)/\(self.maxConnectionAttempts))")
+        
+        // Increment attempts and update timestamp
+        connectionAttempts += 1
+        lastConnectionAttempt = Date()
+        
+        // Use a delay to prevent immediate recursive calls
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            // Double-check we're not already connecting
+            guard !self.isConnectingCalendar else {
+                self.logger.warning("Connection already in progress, skipping OAuth retry")
+                return
+            }
+            self.signInWithGoogleForCalendar()
+        }
+        return true
     }
 
     // Link Google account after Apple Sign-In for calendar access
     func linkGoogleAccountAfterApple() {
         logger.info("Initiating Google account linking for calendar access after Apple Sign-In")
         
+        // Prevent multiple simultaneous linking attempts
+        guard !isConnectingCalendar else {
+            logger.warning("Calendar linking already in progress, ignoring request")
+            return
+        }
+        
         // Clear any previous errors
         errorMessage = nil
         isLoading = true
+        isConnectingCalendar = true
         syncStatus = "Linking Google account for calendar..."
         
         // Find the current root view controller
@@ -556,6 +640,7 @@ class GoogleCalendarManager: ObservableObject {
     // Handle Google linking result
     private func handleGoogleLinkingResult(result: GIDSignInResult?, error: Error?) {
         isLoading = false
+        isConnectingCalendar = false // Clear connecting flag
         
         if let error = error {
             handleGoogleLinkingError(error)

@@ -78,12 +78,6 @@ struct AppointmentsListView: View {
             .navigationBarTitleDisplayMode(.inline)
             .navigationBarBackButtonHidden(false)
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") {
-                        dismiss()
-                    }
-                }
-                
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Refresh") {
                         Task {
@@ -128,16 +122,35 @@ struct AppointmentRowView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
+                // Event type indicator
+                VStack {
+                    Image(systemName: appointment.isPersonalEvent ? "person.fill" : "person.2.fill")
+                        .foregroundColor(appointment.isPersonalEvent ? .purple : .blue)
+                        .font(.caption)
+                }
+                .frame(width: 20)
+                
                 VStack(alignment: .leading, spacing: 4) {
                     // Display title with fallback handling
                     Text(displayTitle)
                         .font(.headline)
                         .lineLimit(2)
                     
-                    // Display time with better formatting
-                    Text(displayTime)
-                        .font(.subheadline)
-                        .foregroundColor(.blue)
+                    HStack {
+                        // Display time with better formatting
+                        Text(displayTime)
+                            .font(.subheadline)
+                            .foregroundColor(.blue)
+                        
+                        // Event type badge
+                        Text(appointment.displayType)
+                            .font(.caption)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(appointment.isPersonalEvent ? Color.purple.opacity(0.1) : Color.blue.opacity(0.1))
+                            .foregroundColor(appointment.isPersonalEvent ? .purple : .blue)
+                            .cornerRadius(4)
+                    }
                 }
                 
                 Spacer()
@@ -154,8 +167,8 @@ struct AppointmentRowView: View {
                     .foregroundColor(.secondary)
             }
             
-            // Show attendees only if they exist and aren't empty
-            if let attendees = appointment.attendees, !attendees.isEmpty {
+            // Show attendees only for appointments (not personal events) and if they exist
+            if !appointment.isPersonalEvent, let attendees = appointment.attendees, !attendees.isEmpty {
                 let validAttendees = attendees.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
                 if !validAttendees.isEmpty {
                     Text("With: \(validAttendees.joined(separator: ", "))")
@@ -206,9 +219,25 @@ struct AppointmentDetailView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     // Title and basic info
                     VStack(alignment: .leading, spacing: 8) {
-                        Text(displayTitle)
-                            .font(.title)
-                            .fontWeight(.bold)
+                        HStack {
+                            Text(displayTitle)
+                                .font(.title)
+                                .fontWeight(.bold)
+                            
+                            Spacer()
+                            
+                            // Event type badge
+                            HStack {
+                                Image(systemName: appointment.isPersonalEvent ? "person.fill" : "person.2.fill")
+                                Text(appointment.displayType)
+                            }
+                            .font(.caption)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(appointment.isPersonalEvent ? Color.purple.opacity(0.1) : Color.blue.opacity(0.1))
+                            .foregroundColor(appointment.isPersonalEvent ? .purple : .blue)
+                            .cornerRadius(6)
+                        }
                         
                         HStack {
                             Image(systemName: "calendar")
@@ -230,8 +259,8 @@ struct AppointmentDetailView: View {
                     
                     Divider()
                     
-                    // Attendees - only show if there are valid attendees
-                    if let attendees = appointment.attendees, !attendees.isEmpty {
+                    // Attendees - only show for appointments (not personal events) and if there are valid attendees
+                    if !appointment.isPersonalEvent, let attendees = appointment.attendees, !attendees.isEmpty {
                         let validAttendees = attendees.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
                         if !validAttendees.isEmpty {
                             VStack(alignment: .leading, spacing: 8) {

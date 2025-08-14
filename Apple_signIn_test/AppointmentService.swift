@@ -29,7 +29,7 @@ class AppointmentService: ObservableObject {
         do {
             let snapshot = try await db.collection("users").document(userId).collection("appointments").getDocuments()
             
-            let fetchedAppointments = try snapshot.documents.compactMap { document -> AppointmentData? in
+            let fetchedAppointments = snapshot.documents.compactMap { document -> AppointmentData? in
                 do {
                     let appointmentData = try document.data(as: AppointmentData.self)
                     
@@ -63,7 +63,8 @@ class AppointmentService: ObservableObject {
                         attendees: cleanAttendees?.isEmpty == true ? nil : cleanAttendees,
                         meetingLink: appointmentData.meetingLink?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true ? nil : appointmentData.meetingLink,
                         location: appointmentData.location?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true ? nil : appointmentData.location,
-                        description: appointmentData.description?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true ? nil : appointmentData.description
+                        description: appointmentData.description?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true ? nil : appointmentData.description,
+                        type: appointmentData.type
                     )
                 } catch {
                     errorMessage = "Failed to parse appointment data: \(error.localizedDescription)"
@@ -97,7 +98,7 @@ class AppointmentService: ObservableObject {
         }
         
         do {
-            try await db.collection("users").document(userId).collection("appointments").addDocument(from: appointment)
+            _ = try db.collection("users").document(userId).collection("appointments").addDocument(from: appointment)
             // Refresh the list
             await fetchAppointments()
         } catch {
@@ -127,7 +128,7 @@ class AppointmentService: ObservableObject {
         }
         
         do {
-            try await db.collection("users").document(userId).collection("appointments").document(appointment.id).setData(from: appointment)
+            try db.collection("users").document(userId).collection("appointments").document(appointment.id).setData(from: appointment)
             // Refresh the list
             await fetchAppointments()
         } catch {

@@ -18,6 +18,9 @@ struct VoiceCommandResponse: Codable {
     let success: Bool
     let message: String
     let appointment: AppointmentData?
+    let conversational: Bool? // New: indicates this is a conversational response
+    let threadId: String? // New: conversation thread ID for context
+    let error: String? // New: detailed error information
 }
 
 struct AppointmentData: Codable, Identifiable {
@@ -30,6 +33,17 @@ struct AppointmentData: Codable, Identifiable {
     let meetingLink: String?
     let location: String?
     let description: String?
+    let type: String? // "personal_event" or nil (default to appointment)
+    
+    // Computed property to determine if this is a personal event
+    var isPersonalEvent: Bool {
+        return type == "personal_event"
+    }
+    
+    // Computed property for display type
+    var displayType: String {
+        return isPersonalEvent ? "Personal Event" : "Appointment"
+    }
 }
 
 @MainActor
@@ -37,6 +51,25 @@ class VoiceCommandService: ObservableObject {
     @Published var isLoading = false
     @Published var lastResponse: VoiceCommandResponse?
     @Published var errorMessage: String?
+    @Published var conversationHistory: [ConversationMessage] = []
+    @Published var currentThreadId: String?
+    
+    // New: Conversation message structure
+    struct ConversationMessage: Identifiable, Codable {
+        let id: UUID
+        let content: String
+        let isUser: Bool
+        let timestamp: Date
+        let appointment: AppointmentData?
+        
+        init(content: String, isUser: Bool, appointment: AppointmentData? = nil) {
+            self.id = UUID()
+            self.content = content
+            self.isUser = isUser
+            self.timestamp = Date()
+            self.appointment = appointment
+        }
+    }
     
     private lazy var functions = Functions.functions()
     private let logger = Logger(subsystem: "com.apple.signin.test", category: "VoiceCommandService")
@@ -49,9 +82,13 @@ class VoiceCommandService: ObservableObject {
             return
         }
         
-        logger.info("Processing voice command: '\(trimmedCommand)'")
+        logger.info("Processing conversational command: '\(trimmedCommand)'")
         isLoading = true
         errorMessage = nil
+        
+        // Add user message to conversation history immediately
+        let userMessage = ConversationMessage(content: trimmedCommand, isUser: true)
+        conversationHistory.append(userMessage)
         
         do {
             // Ensure user is authenticated
@@ -79,20 +116,37 @@ class VoiceCommandService: ObservableObject {
             }
             
             logger.info("Current user authenticated: \(currentUser.uid)")
-            logger.info("Calling Firebase function with command: '\(trimmedCommand)'")
+            logger.info("Calling Firebase function with conversational command: '\(trimmedCommand)'")
             
             let response = try await callFirebaseFunctionWithRetry(command: trimmedCommand)
-            logger.info("Voice command response: success=\(response.success), message='\(response.message)'")
+            logger.info("Conversational response: success=\(response.success), message='\(response.message)'")
             
             lastResponse = response
             
+            // Store thread ID if provided
+            if let threadId = response.threadId {
+                currentThreadId = threadId
+                logger.info("Updated conversation thread ID: \(threadId)")
+            }
+            
+            // Add assistant response to conversation history
+            let assistantMessage = ConversationMessage(
+                content: response.message,
+                isUser: false,
+                appointment: response.appointment
+            )
+            conversationHistory.append(assistantMessage)
+            
             if !response.success {
-                logger.warning("Voice command failed: \(response.message)")
-                errorMessage = response.message
+                logger.warning("Conversational command failed: \(response.message)")
+                errorMessage = response.error ?? response.message
             } else {
-                logger.info("Voice command processed successfully")
+                logger.info("Conversational command processed successfully")
                 if let appointment = response.appointment {
                     logger.info("Appointment data received: \(appointment.title)")
+                }
+                if response.conversational == true {
+                    logger.info("Conversational context maintained with thread: \(self.currentThreadId ?? "unknown")")
                 }
             }
             
@@ -215,6 +269,7 @@ class VoiceCommandService: ObservableObject {
             let meetingLink = appointmentDict["meetingLink"] as? String
             let location = appointmentDict["location"] as? String
             let description = appointmentDict["description"] as? String
+            let type = appointmentDict["type"] as? String
             
             // Generate fallback title if empty or missing
             let title: String
@@ -243,14 +298,18 @@ class VoiceCommandService: ObservableObject {
                 attendees: attendees?.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }, // Filter out empty attendees
                 meetingLink: meetingLink?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true ? nil : meetingLink,
                 location: location?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true ? nil : location,
-                description: description?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true ? nil : description
+                description: description?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true ? nil : description,
+                type: type
             )
         }
         
         return VoiceCommandResponse(
             success: success,
             message: message,
-            appointment: appointmentData
+            appointment: appointmentData,
+            conversational: responseData["conversational"] as? Bool,
+            threadId: responseData["threadId"] as? String,
+            error: responseData["error"] as? String
         )
     }
     
@@ -258,6 +317,25 @@ class VoiceCommandService: ObservableObject {
         logger.info("Clearing last response")
         lastResponse = nil
         errorMessage = nil
+    }
+    
+    // New: Clear conversation history and start fresh
+    func clearConversation() {
+        logger.info("Clearing conversation history")
+        conversationHistory.removeAll()
+        currentThreadId = nil
+        lastResponse = nil
+        errorMessage = nil
+    }
+    
+    // New: Process text input (for chat interface)
+    func processTextCommand(_ text: String) async {
+        await processCommand(text)
+    }
+    
+    // New: Get recent conversation for display
+    func getRecentMessages(limit: Int = 10) -> [ConversationMessage] {
+        return Array(conversationHistory.suffix(limit))
     }
     
     // Debug function to test a simple command

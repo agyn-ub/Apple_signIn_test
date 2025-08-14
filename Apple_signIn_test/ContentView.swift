@@ -8,37 +8,48 @@
 import SwiftUI
 import AuthenticationServices
 import GoogleSignIn
+import os.log
 
 struct ContentView: View {
     @StateObject private var authManager = AuthenticationManager()
     @StateObject private var calendarManager = GoogleCalendarManager()
     @Environment(\.scenePhase) private var scenePhase
+    @State private var lastSceneValidation: Date? // Track last validation time
     
     var body: some View {
         Group {
             if authManager.isSignedIn {
-                // Show the main Voice Calendar interface when signed in
-                VoiceCalendarView()
-                    .environmentObject(authManager)
-                    .environmentObject(calendarManager)
-                    .onAppear {
-                        // Connect the managers
-                        authManager.calendarManager = calendarManager
-                    }
+                // Show the conversation interface when signed in
+                NavigationView {
+                    MainConversationView()
+                        .environmentObject(authManager)
+                        .environmentObject(calendarManager)
+                        .onAppear {
+                            // Connect the managers
+                            authManager.calendarManager = calendarManager
+                        }
+                }
             } else {
                 // Show sign in view when not authenticated
                 SignInView(authManager: authManager, calendarManager: calendarManager)
             }
         }
-        .onChange(of: scenePhase) { phase in
+        .onChange(of: scenePhase) { _, phase in
             if phase == .active && authManager.isSignedIn {
                 // Update activity and check for timeout
                 authManager.updateActivity()
                 authManager.handleSessionTimeout()
                 
-                // Re-validate session when app becomes active after being in background
-                Task {
-                    await authManager.validateSessionOnResume()
+                // Only validate session if significant time has passed since last validation
+                let now = Date()
+                let shouldValidate = lastSceneValidation == nil || 
+                                   now.timeIntervalSince(lastSceneValidation!) > 60 // At least 60 seconds
+                
+                if shouldValidate {
+                    lastSceneValidation = now
+                    Task {
+                        await authManager.validateSessionOnResume()
+                    }
                 }
             }
         }
@@ -218,6 +229,133 @@ struct SignInView: View {
                     showingCalendarPrompt = true
                 }
             }
+        }
+    }
+}
+
+// Main conversation view that replaces VoiceCalendarView
+struct MainConversationView: View {
+    @StateObject private var voiceManager = VoiceRecognitionManager()
+    @StateObject private var commandService = VoiceCommandService()
+    @StateObject private var appointmentService = AppointmentService()
+    @EnvironmentObject private var authManager: AuthenticationManager
+    @EnvironmentObject private var calendarManager: GoogleCalendarManager
+    
+    @State private var showingAppointments = false
+    
+    private let logger = Logger(subsystem: "com.apple.signin.test", category: "MainConversationView")
+    
+    var body: some View {
+        ZStack {
+            ConversationView(
+                commandService: commandService,
+                voiceManager: voiceManager
+            )
+            .navigationTitle("Voice Calendar")
+            .navigationBarTitleDisplayMode(.inline)
+            
+            // Floating calendar button
+            VStack {
+                Spacer()
+                HStack {
+                    Spacer()
+                    Button(action: {
+                        showingAppointments = true
+                    }) {
+                        ZStack {
+                            Circle()
+                                .fill(Color.blue)
+                                .frame(width: 56, height: 56)
+                                .shadow(color: .black.opacity(0.2), radius: 4, y: 2)
+                            
+                            Image(systemName: "calendar")
+                                .font(.system(size: 24, weight: .semibold))
+                                .foregroundColor(.white)
+                        }
+                    }
+                    .padding(.trailing, 20)
+                    .padding(.bottom, 100) // Above the input area
+                }
+            }
+        }
+        .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                // Calendar connection status indicator
+                Button(action: {
+                    if !calendarManager.isConnected {
+                        calendarManager.signInWithGoogleForCalendar()
+                    }
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: calendarManager.isConnected ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                            .foregroundColor(calendarManager.isConnected ? .green : .orange)
+                        Text(calendarManager.isConnected ? "Connected" : "Connect")
+                            .font(.caption)
+                    }
+                }
+                .disabled(calendarManager.isLoading)
+            }
+            
+            ToolbarItem(placement: .navigationBarTrailing) {
+                // Sign Out button - now visible
+                Button("Sign Out") {
+                    authManager.signOut()
+                }
+                .foregroundColor(.red)
+            }
+        }
+        .sheet(isPresented: $showingAppointments) {
+            AppointmentsListView(appointmentService: appointmentService)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button("Done") {
+                            showingAppointments = false
+                        }
+                    }
+                }
+        }
+        .task {
+            logger.info("MainConversationView setup started")
+            
+            // Set up automatic command processing
+            voiceManager.onRecordingFinished = { transcribedText in
+                logger.info("Recording finished callback triggered with text: '\(transcribedText)'")
+                Task {
+                    let trimmedText = transcribedText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmedText.isEmpty {
+                        logger.info("Processing command in background task")
+                        await commandService.processCommand(trimmedText)
+                    } else {
+                        logger.warning("No text to process from voice recording")
+                        await MainActor.run {
+                            voiceManager.errorMessage = "No speech detected. Please try speaking again."
+                        }
+                    }
+                    // Clear the processing state after a short delay
+                    try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
+                    await MainActor.run {
+                        logger.info("Clearing processing state")
+                        voiceManager.isProcessing = false
+                    }
+                }
+            }
+            
+            if !voiceManager.hasPermission {
+                logger.info("Requesting voice permissions on startup")
+                await voiceManager.requestPermissions()
+            } else {
+                logger.info("Voice permissions already granted")
+            }
+            
+            logger.info("Fetching appointments")
+            await appointmentService.fetchAppointments()
+            
+            // Check calendar access status
+            logger.info("Checking calendar access")
+            await calendarManager.connectGoogleCalendar()
+            
+            logger.info("MainConversationView setup completed")
         }
     }
 }

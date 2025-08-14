@@ -8,7 +8,9 @@
 import SwiftUI
 import os.log
 
-struct VoiceCalendarView: View {
+// DEPRECATED: This view has been replaced by MainConversationView in ContentView.swift
+// Keeping for reference/backup purposes only
+struct VoiceCalendarView_Deprecated: View {
     @StateObject private var voiceManager = VoiceRecognitionManager()
     @StateObject private var commandService = VoiceCommandService()
     @StateObject private var appointmentService = AppointmentService()
@@ -19,6 +21,7 @@ struct VoiceCalendarView: View {
     
     @State private var showingAppointments = false
     @State private var showingDebug = false
+    @State private var showingConversation = false
     
     // Logger for debugging
     private let logger = Logger(subsystem: "com.apple.signin.test", category: "VoiceCalendarView")
@@ -43,7 +46,7 @@ struct VoiceCalendarView: View {
                         .multilineTextAlignment(.center)
                 }
                 
-                // Calendar sync status
+                // Calendar sync status and conversation info
                 VStack(spacing: 8) {
                     HStack {
                         Image(systemName: calendarManager.isConnected ? "checkmark.circle.fill" : "xmark.circle.fill")
@@ -54,15 +57,58 @@ struct VoiceCalendarView: View {
                             .foregroundColor(.secondary)
                         
                         Spacer()
+                        
+                        // Conversation indicator
+                        if commandService.currentThreadId != nil {
+                            HStack(spacing: 4) {
+                                Image(systemName: "bubble.left.and.bubble.right.fill")
+                                    .foregroundColor(.blue)
+                                Text("Chat Active")
+                                    .font(.caption)
+                                    .foregroundColor(.blue)
+                            }
+                        }
                     }
                     
-                    // Debug information
-                    if !calendarManager.isConnected {
-                        Button("Connect Calendar") {
-                            calendarManager.signInWithGoogleForCalendar()
+                    // Show conversation count if there are messages
+                    if !commandService.conversationHistory.isEmpty {
+                        HStack {
+                            Text("\(commandService.conversationHistory.count) messages in conversation")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                            
+                            Spacer()
+                            
+                            Button("View Chat") {
+                                showingConversation = true
+                            }
+                            .font(.caption2)
+                            .controlSize(.mini)
                         }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
+                    }
+                    
+                    // Calendar connection status
+                    if !calendarManager.isConnected {
+                        VStack(spacing: 8) {
+                            if let errorMessage = calendarManager.errorMessage,
+                               (errorMessage.contains("expired") || errorMessage.contains("could not be refreshed")) {
+                                Button("Reconnect Calendar") {
+                                    calendarManager.forceReauthentication()
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.small)
+                                
+                                Text("Calendar authentication expired")
+                                    .font(.caption2)
+                                    .foregroundColor(.orange)
+                            } else {
+                                Button("Connect Calendar") {
+                                    calendarManager.signInWithGoogleForCalendar()
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.small)
+                            }
+                        }
                     }
                 }
                 .padding(.horizontal)
@@ -191,11 +237,19 @@ struct VoiceCalendarView: View {
                 
                 // Bottom buttons
                 VStack(spacing: 16) {
-                    Button("Appointments") {
-                        showingAppointments = true
+                    HStack(spacing: 16) {
+                        Button("Chat") {
+                            showingConversation = true
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .frame(maxWidth: .infinity)
+                        
+                        Button("Appointments") {
+                            showingAppointments = true
+                        }
+                        .buttonStyle(.bordered)
+                        .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.bordered)
-                    .frame(maxWidth: .infinity)
                     
                     HStack(spacing: 16) {
                         Button("Debug") {
@@ -218,6 +272,22 @@ struct VoiceCalendarView: View {
             .navigationBarTitleDisplayMode(.inline)
             .sheet(isPresented: $showingAppointments) {
                 AppointmentsListView(appointmentService: appointmentService)
+            }
+            .sheet(isPresented: $showingConversation) {
+                NavigationView {
+                    ConversationView(
+                        commandService: commandService,
+                        voiceManager: voiceManager
+                    )
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .navigationBarTrailing) {
+                            Button("Done") {
+                                showingConversation = false
+                            }
+                        }
+                    }
+                }
             }
             .sheet(isPresented: $showingDebug) {
                 DebugView(
@@ -331,5 +401,5 @@ struct AppointmentCard: View {
 }
 
 #Preview {
-    VoiceCalendarView()
+    VoiceCalendarView_Deprecated()
 }

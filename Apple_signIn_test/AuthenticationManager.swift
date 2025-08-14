@@ -26,6 +26,8 @@ class AuthenticationManager: NSObject, ObservableObject {
     private var lastActivityTime = Date()
     private let sessionTimeoutInterval: TimeInterval = 3600 // 1 hour
     private var isCheckingSession = false // Prevent concurrent session checks
+    private var lastSessionValidation: Date? // Track last validation time
+    private let sessionValidationCooldownSeconds: TimeInterval = 30 // Minimum 30 seconds between validations
     weak var calendarManager: GoogleCalendarManager?
     
     override init() {
@@ -78,8 +80,13 @@ class AuthenticationManager: NSObject, ObservableObject {
         isLoading = true
         errorMessage = nil
         
-        // Start Google Sign In flow
-        GIDSignIn.sharedInstance.signIn(withPresenting: presentingViewController) { [weak self] result, error in
+        // Configure additional scopes for calendar access
+        let calendarScopes = ["https://www.googleapis.com/auth/calendar.events"]
+        
+        // Start Google Sign In flow with calendar scopes
+        GIDSignIn.sharedInstance.signIn(withPresenting: presentingViewController, 
+                                       hint: nil, 
+                                       additionalScopes: calendarScopes) { [weak self] result, error in
             DispatchQueue.main.async {
                 self?.isLoading = false
                 if let error = error {
@@ -95,9 +102,13 @@ class AuthenticationManager: NSObject, ObservableObject {
                 // Create Firebase credential
                 let credential = GoogleAuthProvider.credential(withIDToken: idToken,
                                                              accessToken: googleUser.accessToken.tokenString)
+                // Store Google tokens for calendar access
+                let googleAccessToken = googleUser.accessToken.tokenString
+                let googleRefreshToken = googleUser.refreshToken.tokenString
+                
                 // If already signed in, link account; else, sign in
                 if Auth.auth().currentUser != nil {
-                    self?.linkAccount(with: credential)
+                    self?.linkAccount(with: credential, googleAccessToken: googleAccessToken, googleRefreshToken: googleRefreshToken)
                 } else {
                     Auth.auth().signIn(with: credential) { authResult, error in
                         DispatchQueue.main.async {
@@ -109,9 +120,13 @@ class AuthenticationManager: NSObject, ObservableObject {
                             self?.isSignedIn = true
                             self?.errorMessage = nil
                             
-                            // Check and connect to Google Calendar if needed
+                            // Store Google tokens for calendar access
                             Task { @MainActor in
-                                await self?.checkAndConnectGoogleCalendar()
+                                await self?.storeGoogleTokensForCalendar(
+                                    accessToken: googleAccessToken,
+                                    refreshToken: googleRefreshToken,
+                                    user: googleUser
+                                )
                             }
                         }
                     }
@@ -120,8 +135,42 @@ class AuthenticationManager: NSObject, ObservableObject {
         }
     }
     
+    // MARK: - Google Calendar Token Management
+    func storeGoogleTokensForCalendar(accessToken: String, refreshToken: String?, user: GIDGoogleUser) async {
+        guard Auth.auth().currentUser != nil else {
+            self.errorMessage = "No Firebase user found to store tokens"
+            return
+        }
+        
+        print("Storing Google tokens for calendar access...")
+        
+        // Store tokens using Firebase Functions for backend access
+        let functions = Functions.functions()
+        let data: [String: Any] = [
+            "accessToken": accessToken,
+            "refreshToken": refreshToken ?? "",
+            "expiryDate": user.accessToken.expirationDate?.timeIntervalSince1970 ?? 0,
+            "scopes": user.grantedScopes ?? [],
+            "name": user.profile?.name ?? "",
+            "email": user.profile?.email ?? ""
+        ]
+        
+        do {
+            try await functions.httpsCallable("storeGoogleCalendarAuth").call(data)
+            print("✅ Google calendar tokens stored successfully")
+            
+            // Update calendar manager
+            if let calendarManager = self.calendarManager {
+                await calendarManager.checkServerStoredAuth()
+            }
+        } catch {
+            print("❌ Failed to store Google calendar tokens: \(error.localizedDescription)")
+            self.errorMessage = "Failed to set up calendar access: \(error.localizedDescription)"
+        }
+    }
+    
     // MARK: - Account Linking
-    func linkAccount(with credential: AuthCredential) {
+    func linkAccount(with credential: AuthCredential, googleAccessToken: String? = nil, googleRefreshToken: String? = nil) {
         guard let currentUser = Auth.auth().currentUser else {
             self.errorMessage = "No user is currently signed in"
             return
@@ -143,9 +192,18 @@ class AuthenticationManager: NSObject, ObservableObject {
                 self?.errorMessage = nil
                 self?.updateLinkedProviders()
                 
-                // Check and connect to Google Calendar if needed
-                Task { @MainActor in
-                    await self?.checkAndConnectGoogleCalendar()
+                // If Google tokens were provided, store them for calendar access
+                if googleAccessToken != nil {
+                    Task { @MainActor in
+                        // For linking case, we don't have the full GIDGoogleUser object
+                        // So we'll use minimal data or check if calendar connection is needed
+                        await self?.checkAndConnectGoogleCalendar()
+                    }
+                } else {
+                    // Check and connect to Google Calendar if needed
+                    Task { @MainActor in
+                        await self?.checkAndConnectGoogleCalendar()
+                    }
                 }
             }
         }
@@ -278,7 +336,7 @@ class AuthenticationManager: NSObject, ObservableObject {
         return hashString
     }
     
-    // Check and connect to Google Calendar if needed
+    // Check and connect to Google Calendar if needed - consolidated with guards
     @MainActor
     func checkAndConnectGoogleCalendar() async {
         guard let calendarManager = self.calendarManager else {
@@ -286,25 +344,25 @@ class AuthenticationManager: NSObject, ObservableObject {
             return
         }
         
-        // Prevent multiple simultaneous calendar checks during startup
+        // Prevent multiple simultaneous calendar checks
         guard !isCheckingSession else {
             print("Session validation in progress, deferring calendar check...")
             return
         }
         
-        // First check if calendar is already connected
+        // Prevent if calendar manager is already connecting
+        if calendarManager.isLoading {
+            print("Calendar connection already in progress, skipping...")
+            return
+        }
+        
+        // Only check server auth, don't automatically trigger sign-in
         await calendarManager.checkServerStoredAuth()
         
+        // Note: We no longer automatically call signInWithGoogleForCalendar here
+        // This prevents recursive loops - let the UI handle manual calendar connection
         if !calendarManager.isConnected {
-            // If not connected, check if user is signed in with Google
-            if linkedProviders.contains("google.com") {
-                // User is signed in with Google but calendar is not connected
-                // Try to connect calendar
-                print("User signed in with Google but calendar not connected. Connecting calendar...")
-                calendarManager.signInWithGoogleForCalendar()
-            } else {
-                print("User not signed in with Google. Calendar connection requires Google Sign-In.")
-            }
+            print("Calendar not connected - user can manually connect if needed")
         } else {
             print("Calendar already connected")
         }
@@ -384,6 +442,13 @@ class AuthenticationManager: NSObject, ObservableObject {
             return
         }
         
+        // Check cooldown period - don't validate too frequently
+        if let lastValidation = lastSessionValidation,
+           Date().timeIntervalSince(lastValidation) < sessionValidationCooldownSeconds {
+            print("Session validation cooldown active, skipping...")
+            return
+        }
+        
         guard let currentUser = Auth.auth().currentUser else {
             // User is no longer authenticated
             self.user = nil
@@ -393,6 +458,7 @@ class AuthenticationManager: NSObject, ObservableObject {
         }
         
         isCheckingSession = true
+        lastSessionValidation = Date() // Update timestamp
         defer { isCheckingSession = false }
         
         do {

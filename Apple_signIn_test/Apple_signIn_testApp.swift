@@ -16,8 +16,10 @@ struct Apple_signIn_testApp: App {
     init() {
         FirebaseApp.configure()
         
-        // Configure Google Sign In with the correct client ID for calendar access
-        let clientID = "73003602008-0jgk8u5h4s4pdu3010utqovs0kb14fgb.apps.googleusercontent.com"
+        // Configure Google Sign In using client ID from GoogleService-Info.plist
+        guard let clientID = FirebaseApp.app()?.options.clientID else {
+            fatalError("No client ID found in GoogleService-Info.plist")
+        }
         GIDSignIn.sharedInstance.configuration = GIDConfiguration(clientID: clientID)
     }
     
