@@ -8,6 +8,7 @@
 import Foundation
 import FirebaseAuth
 import FirebaseFunctions
+import GoogleSignIn
 import os.log
 
 struct VoiceCommandRequest: Codable {
@@ -34,6 +35,9 @@ struct AppointmentData: Codable, Identifiable {
     let location: String?
     let description: String?
     let type: String? // "personal_event" or nil (default to appointment)
+    let status: String? // "scheduled", "cancelled", etc.
+    let googleCalendarEventId: String? // Google Calendar event ID for synced events
+    let calendarSynced: Bool? // Whether the event is synced to Google Calendar
     
     // Computed property to determine if this is a personal event
     var isPersonalEvent: Bool {
@@ -43,6 +47,11 @@ struct AppointmentData: Codable, Identifiable {
     // Computed property for display type
     var displayType: String {
         return isPersonalEvent ? "Personal Event" : "Appointment"
+    }
+    
+    // Computed property to check if cancelled
+    var isCancelled: Bool {
+        return status == "cancelled"
     }
 }
 
@@ -226,12 +235,44 @@ class VoiceCommandService: ObservableObject {
         logger.info("Calling Firebase callable function: processVoiceCommand")
         
         // Prepare data for Firebase callable function
-        let data: [String: Any] = [
+        var data: [String: Any] = [
             "command": command,
             "timezone": TimeZone.current.identifier
         ]
         
-        logger.info("Function data: \(data)")
+        // Add Google Calendar access token if available
+        if let currentGoogleUser = GIDSignIn.sharedInstance.currentUser {
+            let accessToken = currentGoogleUser.accessToken.tokenString
+            if !accessToken.isEmpty {
+                data["googleCalendarToken"] = accessToken
+                logger.info("Including Google Calendar access token in request")
+                
+                // Check if token is about to expire and refresh if needed
+                let expirationDate = currentGoogleUser.accessToken.expirationDate
+                if let expirationDate = expirationDate {
+                    let timeUntilExpiry = expirationDate.timeIntervalSinceNow
+                    if timeUntilExpiry < 300 { // Less than 5 minutes until expiry
+                        logger.info("Google access token expires soon, refreshing...")
+                        do {
+                            try await currentGoogleUser.refreshTokensIfNeeded()
+                            // Get the refreshed token
+                            let refreshedToken = currentGoogleUser.accessToken.tokenString
+                            data["googleCalendarToken"] = refreshedToken
+                            logger.info("Google access token refreshed successfully")
+                        } catch {
+                            logger.warning("Failed to refresh Google access token: \(error.localizedDescription)")
+                            // Continue with existing token
+                        }
+                    }
+                }
+            } else {
+                logger.warning("Google user exists but access token is empty")
+            }
+        } else {
+            logger.info("No Google user signed in, proceeding without calendar token")
+        }
+        
+        logger.info("Function data keys: \(data.keys)")
         
         // Call the Firebase function with proper concurrency handling
         let result = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[String: Any], Error>) in
@@ -270,6 +311,9 @@ class VoiceCommandService: ObservableObject {
             let location = appointmentDict["location"] as? String
             let description = appointmentDict["description"] as? String
             let type = appointmentDict["type"] as? String
+            let status = appointmentDict["status"] as? String
+            let googleCalendarEventId = appointmentDict["googleCalendarEventId"] as? String
+            let calendarSynced = appointmentDict["calendarSynced"] as? Bool
             
             // Generate fallback title if empty or missing
             let title: String
@@ -299,7 +343,10 @@ class VoiceCommandService: ObservableObject {
                 meetingLink: meetingLink?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true ? nil : meetingLink,
                 location: location?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true ? nil : location,
                 description: description?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true ? nil : description,
-                type: type
+                type: type,
+                status: status,
+                googleCalendarEventId: googleCalendarEventId,
+                calendarSynced: calendarSynced
             )
         }
         

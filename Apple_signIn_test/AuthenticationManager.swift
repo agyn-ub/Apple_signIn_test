@@ -36,7 +36,7 @@ class AuthenticationManager: NSObject, ObservableObject {
         self.user = Auth.auth().currentUser
         self.isSignedIn = user != nil
         // Listen for authentication state changes
-        let _ = Auth.auth().addStateDidChangeListener { [weak self] _, user in
+        let _ = Auth.auth().addStateDidChangeListener { [weak self] _, user in 
             self?.user = user
             self?.isSignedIn = user != nil
             self?.updateLinkedProviders()

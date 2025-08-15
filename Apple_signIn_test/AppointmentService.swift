@@ -33,6 +33,11 @@ class AppointmentService: ObservableObject {
                 do {
                     let appointmentData = try document.data(as: AppointmentData.self)
                     
+                    // Filter out cancelled appointments
+                    if appointmentData.status == "cancelled" {
+                        return nil
+                    }
+                    
                     // Generate fallback title if empty or missing
                     let finalTitle: String
                     if appointmentData.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -64,7 +69,10 @@ class AppointmentService: ObservableObject {
                         meetingLink: appointmentData.meetingLink?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true ? nil : appointmentData.meetingLink,
                         location: appointmentData.location?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true ? nil : appointmentData.location,
                         description: appointmentData.description?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true ? nil : appointmentData.description,
-                        type: appointmentData.type
+                        type: appointmentData.type,
+                        status: appointmentData.status,
+                        googleCalendarEventId: appointmentData.googleCalendarEventId,
+                        calendarSynced: appointmentData.calendarSynced
                     )
                 } catch {
                     errorMessage = "Failed to parse appointment data: \(error.localizedDescription)"
