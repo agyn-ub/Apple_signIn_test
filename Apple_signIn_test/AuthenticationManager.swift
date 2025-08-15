@@ -48,6 +48,60 @@ class AuthenticationManager: NSObject, ObservableObject {
                 }
             }
         }
+        
+        // Check and restore previous session on initialization
+        Task { @MainActor in
+            await checkAndRestorePreviousSession()
+        }
+    }
+    
+    // MARK: - Session Restoration
+    @MainActor
+    func checkAndRestorePreviousSession() async {
+        // Mark as loading while checking for previous session
+        isLoading = true
+        defer { isLoading = false }
+        
+        // First check if Firebase has a valid session
+        guard let currentUser = Auth.auth().currentUser else {
+            print("No Firebase session to restore")
+            return
+        }
+        
+        // Check if the Firebase token is still valid
+        do {
+            let tokenResult = try await currentUser.getIDTokenResult(forcingRefresh: false)
+            let now = Date()
+            
+            // If token is expired or expires soon, try to refresh it
+            if tokenResult.expirationDate < now || tokenResult.expirationDate.timeIntervalSince(now) < 300 {
+                print("Firebase token expired or expiring soon, attempting refresh...")
+                _ = try await currentUser.getIDTokenResult(forcingRefresh: true)
+                print("Firebase token refreshed successfully")
+            }
+            
+            // Update our state to reflect the valid session
+            self.user = currentUser
+            self.isSignedIn = true
+            self.updateLinkedProviders()
+            
+            // If we have Google provider, check if GIDSignIn already restored the session
+            if linkedProviders.contains("google.com") {
+                // The Google session restoration happens in Apple_signIn_testApp.swift
+                // Just verify calendar connection status
+                if let calendarManager = self.calendarManager {
+                    await calendarManager.checkServerStoredAuth()
+                }
+            }
+            
+            print("Successfully restored authentication session")
+        } catch {
+            print("Failed to verify/refresh Firebase token: \(error.localizedDescription)")
+            // Token is invalid, user needs to sign in again
+            self.user = nil
+            self.isSignedIn = false
+            self.linkedProviders = []
+        }
     }
     
     // MARK: - Apple Sign In

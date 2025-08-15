@@ -15,10 +15,28 @@ struct ContentView: View {
     @StateObject private var calendarManager = GoogleCalendarManager()
     @Environment(\.scenePhase) private var scenePhase
     @State private var lastSceneValidation: Date? // Track last validation time
+    @State private var isCheckingSession = true // Track session restoration state
     
     var body: some View {
         Group {
-            if authManager.isSignedIn {
+            if isCheckingSession && authManager.isLoading {
+                // Show loading state while checking for previous session
+                VStack(spacing: 20) {
+                    ProgressView()
+                        .progressViewStyle(CircularProgressViewStyle())
+                        .scaleEffect(1.5)
+                    
+                    Text("Checking for previous session...")
+                        .font(.headline)
+                        .foregroundColor(.secondary)
+                    
+                    Text("Please wait")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color(UIColor.systemBackground))
+            } else if authManager.isSignedIn {
                 // Show the conversation interface when signed in
                 NavigationView {
                     MainConversationView()
@@ -32,6 +50,21 @@ struct ContentView: View {
             } else {
                 // Show sign in view when not authenticated
                 SignInView(authManager: authManager, calendarManager: calendarManager)
+            }
+        }
+        .onAppear {
+            // Connect the managers
+            authManager.calendarManager = calendarManager
+            
+            // Stop showing loading state after a short delay to prevent flashing
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                isCheckingSession = false
+            }
+        }
+        .onChange(of: authManager.isLoading) { _, isLoading in
+            // Update checking session state when loading state changes
+            if !isLoading {
+                isCheckingSession = false
             }
         }
         .onChange(of: scenePhase) { _, phase in
