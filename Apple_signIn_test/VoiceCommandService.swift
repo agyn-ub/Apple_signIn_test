@@ -22,6 +22,9 @@ struct VoiceCommandResponse: Codable {
     let conversational: Bool? // New: indicates this is a conversational response
     let threadId: String? // New: conversation thread ID for context
     let error: String? // New: detailed error information
+    let requiresConfirmation: Bool? // New: indicates this response needs user confirmation
+    let operationType: String? // New: type of operation requiring confirmation (e.g., "bulk_cancellation")
+    let appointmentCount: Int? // New: number of appointments affected
 }
 
 struct AppointmentData: Codable, Identifiable {
@@ -62,6 +65,8 @@ class VoiceCommandService: ObservableObject {
     @Published var errorMessage: String?
     @Published var conversationHistory: [ConversationMessage] = []
     @Published var currentThreadId: String?
+    @Published var hasPendingConfirmation = false
+    @Published var pendingOperationType: String?
     
     // New: Conversation message structure
     struct ConversationMessage: Identifiable, Codable {
@@ -136,6 +141,20 @@ class VoiceCommandService: ObservableObject {
             if let threadId = response.threadId {
                 currentThreadId = threadId
                 logger.info("Updated conversation thread ID: \(threadId)")
+            }
+            
+            // Check if this requires confirmation
+            if response.requiresConfirmation == true {
+                hasPendingConfirmation = true
+                pendingOperationType = response.operationType
+                logger.info("Response requires confirmation for operation: \(response.operationType ?? "unknown")")
+            } else {
+                // Clear pending confirmation if this was a confirmation response
+                if hasPendingConfirmation {
+                    hasPendingConfirmation = false
+                    pendingOperationType = nil
+                    logger.info("Confirmation processed, clearing pending state")
+                }
             }
             
             // Add assistant response to conversation history
@@ -356,7 +375,10 @@ class VoiceCommandService: ObservableObject {
             appointment: appointmentData,
             conversational: responseData["conversational"] as? Bool,
             threadId: responseData["threadId"] as? String,
-            error: responseData["error"] as? String
+            error: responseData["error"] as? String,
+            requiresConfirmation: responseData["requiresConfirmation"] as? Bool,
+            operationType: responseData["operationType"] as? String,
+            appointmentCount: responseData["appointmentCount"] as? Int
         )
     }
     

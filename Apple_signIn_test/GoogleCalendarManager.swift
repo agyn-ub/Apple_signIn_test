@@ -81,6 +81,12 @@ class GoogleCalendarManager: ObservableObject {
             return 
         }
         
+        // Prevent repeated checks if already checking or connected
+        if isLoading || isConnectingCalendar {
+            logger.info("Already checking or connecting calendar, skipping duplicate check")
+            return
+        }
+        
         logger.info("Checking server stored auth for user: \(userId)")
         isLoading = true
         syncStatus = "Checking server for saved connection..."
@@ -94,24 +100,28 @@ class GoogleCalendarManager: ObservableObject {
                 isConnected = true
                 syncStatus = "Connected (server)"
                 errorMessage = nil
+                resetConnectionState() // Reset any connection attempt counters
             } else {
                 let message = data["message"] as? String ?? "Calendar access not available"
                 logger.warning("Calendar authentication failed: \(message)")
                 
-                // Check if tokens are expired and need re-authentication
+                // Don't automatically trigger re-authentication for expired tokens
+                // Let the user manually reconnect when needed
                 if message.contains("expired") || message.contains("could not be refreshed") {
-                    logger.info("Google Calendar tokens expired, triggering re-authentication")
-                    syncStatus = "Authentication expired - reconnecting..."
-                    // Trigger re-authentication flow
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                        self.linkGoogleAccountAfterApple()
-                    }
+                    logger.info("Google Calendar tokens expired")
+                    syncStatus = "Authentication expired - please reconnect"
+                    isConnected = false
+                    errorMessage = "Calendar authentication expired. Please reconnect when needed."
+                    // Don't automatically trigger re-authentication
                     return
                 }
                 
-                // Check if server requires OAuth flow
-                if checkAndHandleServerOAuth(data: data) {
-                    // OAuth flow is being handled
+                // Don't automatically handle OAuth flow
+                if data["authUrl"] != nil {
+                    logger.info("Server suggests OAuth flow, but not automatically triggering")
+                    isConnected = false
+                    syncStatus = "Not connected"
+                    errorMessage = "Calendar not connected. Connect when needed."
                     return
                 }
                 
@@ -475,11 +485,17 @@ class GoogleCalendarManager: ObservableObject {
         }
     }
 
-    // 6. Calendar Access Flow - Check Connection Status
+    // 6. Calendar Access Flow - Check Connection Status (without automatic re-auth)
     func connectGoogleCalendar() async {
         guard let userId = Auth.auth().currentUser?.uid else { 
             logger.error("No user ID available for calendar connection check")
             return 
+        }
+        
+        // Prevent duplicate connection checks
+        if isLoading || isConnectingCalendar || isConnected {
+            logger.info("Calendar connection check already in progress or connected")
+            return
         }
         
         logger.info("Checking calendar access for user: \(userId)")
@@ -495,18 +511,18 @@ class GoogleCalendarManager: ObservableObject {
                 isConnected = true
                 syncStatus = "Google Calendar is connected and accessible"
                 errorMessage = nil
+                resetConnectionState() // Reset connection attempt counters
             } else {
                 let message = data["message"] as? String ?? "Calendar access not available"
                 logger.warning("Calendar access denied: \(message)")
                 
-                // Check if tokens are expired and need re-authentication
+                // Don't automatically trigger re-authentication
                 if message.contains("expired") || message.contains("could not be refreshed") {
-                    logger.info("Google Calendar tokens expired during connection check, triggering re-authentication")
-                    syncStatus = "Authentication expired - reconnecting..."
-                    // Trigger re-authentication flow
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                        self.linkGoogleAccountAfterApple()
-                    }
+                    logger.info("Google Calendar tokens expired during connection check")
+                    syncStatus = "Authentication expired - please reconnect"
+                    isConnected = false
+                    errorMessage = "Calendar authentication expired. Please reconnect when needed."
+                    // Don't automatically trigger re-authentication
                     return
                 }
                 

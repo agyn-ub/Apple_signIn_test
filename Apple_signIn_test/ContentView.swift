@@ -15,18 +15,17 @@ struct ContentView: View {
     @StateObject private var calendarManager = GoogleCalendarManager()
     @Environment(\.scenePhase) private var scenePhase
     @State private var lastSceneValidation: Date? // Track last validation time
-    @State private var isCheckingSession = true // Track session restoration state
     
     var body: some View {
         Group {
-            if isCheckingSession && authManager.isLoading {
-                // Show loading state while checking for previous session
+            if authManager.isLoading && !authManager.isSignedIn {
+                // Show loading state only during initial authentication check
                 VStack(spacing: 20) {
                     ProgressView()
                         .progressViewStyle(CircularProgressViewStyle())
                         .scaleEffect(1.5)
                     
-                    Text("Checking for previous session...")
+                    Text("Checking authentication...")
                         .font(.headline)
                         .foregroundColor(.secondary)
                     
@@ -53,19 +52,8 @@ struct ContentView: View {
             }
         }
         .onAppear {
-            // Connect the managers
+            // Connect the managers once at startup
             authManager.calendarManager = calendarManager
-            
-            // Stop showing loading state after a short delay to prevent flashing
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                isCheckingSession = false
-            }
-        }
-        .onChange(of: authManager.isLoading) { _, isLoading in
-            // Update checking session state when loading state changes
-            if !isLoading {
-                isCheckingSession = false
-            }
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active && authManager.isSignedIn {
@@ -384,9 +372,9 @@ struct MainConversationView: View {
             logger.info("Fetching appointments")
             await appointmentService.fetchAppointments()
             
-            // Check calendar access status
-            logger.info("Checking calendar access")
-            await calendarManager.connectGoogleCalendar()
+            // Only check calendar status, don't automatically connect
+            logger.info("Checking calendar access status")
+            await calendarManager.checkServerStoredAuth()
             
             logger.info("MainConversationView setup completed")
         }

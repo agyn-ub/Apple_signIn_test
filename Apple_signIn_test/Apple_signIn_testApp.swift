@@ -22,17 +22,8 @@ struct Apple_signIn_testApp: App {
         }
         GIDSignIn.sharedInstance.configuration = GIDConfiguration(clientID: clientID)
         
-        // Restore previous Google Sign-In session if available
-        // This will automatically restore the user's authentication from keychain
-        GIDSignIn.sharedInstance.restorePreviousSignIn { user, error in
-            if let user = user {
-                print("Successfully restored Google Sign-In session for: \(user.profile?.email ?? "unknown")")
-            } else if let error = error {
-                print("Failed to restore Google Sign-In session: \(error.localizedDescription)")
-            } else {
-                print("No previous Google Sign-In session to restore")
-            }
-        }
+        // Note: Google Sign-In restoration is handled by AuthenticationManager
+        // We don't restore here to prevent duplicate authentication attempts
     }
     
     var body: some Scene {

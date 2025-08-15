@@ -84,6 +84,23 @@ struct ConversationView: View {
                                 .padding(.horizontal, 20)
                                 .id("quick-responses")
                             }
+                            
+                            // Confirmation quick actions
+                            if commandService.hasPendingConfirmation {
+                                ConfirmationActionsView(
+                                    operationType: commandService.pendingOperationType ?? "operation",
+                                    onConfirm: {
+                                        textInput = "Yes, confirm"
+                                        sendTextMessage()
+                                    },
+                                    onCancel: {
+                                        textInput = "No, cancel"
+                                        sendTextMessage()
+                                    }
+                                )
+                                .padding(.horizontal, 20)
+                                .id("confirmation-actions")
+                            }
                         }
                         .padding(.top, 16)
                         .padding(.bottom, 100) // Space for input
@@ -695,6 +712,60 @@ struct QuickResponseView: View {
         .background(Color(.secondarySystemGroupedBackground))
         .cornerRadius(12)
         .shadow(color: .black.opacity(0.05), radius: 2, y: 1)
+    }
+}
+
+// Confirmation Actions View for bulk operations
+struct ConfirmationActionsView: View {
+    let operationType: String
+    let onConfirm: () -> Void
+    let onCancel: () -> Void
+    
+    var body: some View {
+        VStack(spacing: 12) {
+            Text("⚠️ Confirmation Required")
+                .font(.caption)
+                .foregroundColor(.orange)
+                .textCase(.uppercase)
+                .tracking(0.5)
+            
+            HStack(spacing: 12) {
+                Button(action: onCancel) {
+                    HStack {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 16))
+                        Text("Cancel")
+                            .fontWeight(.medium)
+                    }
+                    .foregroundColor(.red)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 10)
+                    .background(Color.red.opacity(0.1))
+                    .cornerRadius(20)
+                }
+                
+                Button(action: onConfirm) {
+                    HStack {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 16))
+                        Text("Confirm")
+                            .fontWeight(.medium)
+                    }
+                    .foregroundColor(.green)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 10)
+                    .background(Color.green.opacity(0.1))
+                    .cornerRadius(20)
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(.systemBackground))
+                .shadow(color: .orange.opacity(0.2), radius: 8, y: 2)
+        )
     }
 }
 

@@ -36,7 +36,7 @@ class AuthenticationManager: NSObject, ObservableObject {
         self.user = Auth.auth().currentUser
         self.isSignedIn = user != nil
         // Listen for authentication state changes
-        let _ = Auth.auth().addStateDidChangeListener { [weak self] _, user in 
+        let _ = Auth.auth().addStateDidChangeListener { [weak self] _, user in
             self?.user = user
             self?.isSignedIn = user != nil
             self?.updateLinkedProviders()
@@ -85,12 +85,23 @@ class AuthenticationManager: NSObject, ObservableObject {
             self.isSignedIn = true
             self.updateLinkedProviders()
             
-            // If we have Google provider, check if GIDSignIn already restored the session
+            // If we have Google provider, restore Google Sign-In session
             if linkedProviders.contains("google.com") {
-                // The Google session restoration happens in Apple_signIn_testApp.swift
-                // Just verify calendar connection status
-                if let calendarManager = self.calendarManager {
-                    await calendarManager.checkServerStoredAuth()
+                // Restore Google Sign-In session if available
+                GIDSignIn.sharedInstance.restorePreviousSignIn { [weak self] user, error in
+                    Task { @MainActor in
+                        if let user = user {
+                            print("Successfully restored Google Sign-In session for: \(user.profile?.email ?? "unknown")")
+                            // Check calendar connection status after Google restoration
+                            if let calendarManager = self?.calendarManager {
+                                await calendarManager.checkServerStoredAuth()
+                            }
+                        } else if let error = error {
+                            print("Failed to restore Google Sign-In session: \(error.localizedDescription)")
+                        } else {
+                            print("No previous Google Sign-In session to restore")
+                        }
+                    }
                 }
             }
             
@@ -148,7 +159,7 @@ class AuthenticationManager: NSObject, ObservableObject {
                     return
                 }
                 // Get Google ID token
-                guard let googleUser = result?.user,
+                  guard let googleUser = result?.user,
                       let idToken = googleUser.idToken?.tokenString else {
                     self?.errorMessage = "Failed to get Google ID token"
                     return
@@ -173,14 +184,20 @@ class AuthenticationManager: NSObject, ObservableObject {
                             self?.user = authResult?.user
                             self?.isSignedIn = true
                             self?.errorMessage = nil
+                            self?.updateLinkedProviders()
                             
-                            // Store Google tokens for calendar access
+                            // Store Google tokens for calendar access immediately after sign-in
                             Task { @MainActor in
                                 await self?.storeGoogleTokensForCalendar(
                                     accessToken: googleAccessToken,
                                     refreshToken: googleRefreshToken,
                                     user: googleUser
                                 )
+                                // Update calendar manager connection status after storing tokens
+                                if let calendarManager = self?.calendarManager {
+                                    calendarManager.isConnected = true
+                                    calendarManager.syncStatus = "Connected"
+                                }
                             }
                         }
                     }
@@ -404,17 +421,17 @@ class AuthenticationManager: NSObject, ObservableObject {
             return
         }
         
-        // Prevent if calendar manager is already connecting
-        if calendarManager.isLoading {
-            print("Calendar connection already in progress, skipping...")
+        // Prevent if calendar manager is already connecting or connected
+        if calendarManager.isLoading || calendarManager.isConnected {
+            print("Calendar already connected or connection in progress, skipping...")
             return
         }
         
         // Only check server auth, don't automatically trigger sign-in
         await calendarManager.checkServerStoredAuth()
         
-        // Note: We no longer automatically call signInWithGoogleForCalendar here
-        // This prevents recursive loops - let the UI handle manual calendar connection
+        // Don't automatically trigger calendar connection
+        // Let the user manually connect if needed
         if !calendarManager.isConnected {
             print("Calendar not connected - user can manually connect if needed")
         } else {
