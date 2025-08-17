@@ -15,7 +15,21 @@ class AppointmentService: ObservableObject {
     @Published var isLoading = false
     @Published var errorMessage: String?
     
-    private let db = Firestore.firestore()
+    private let db: Firestore = {
+        let firestore = Firestore.firestore()
+        
+        #if DEBUG
+        // Optionally use Firestore emulator in debug mode
+        // Uncomment the following lines if you want to use local Firestore emulator
+        // let settings = firestore.settings
+        // settings.host = "127.0.0.1:8080"
+        // settings.isSSLEnabled = false
+        // firestore.settings = settings
+        // print("🔧 DEBUG: Using Firestore emulator at 127.0.0.1:8080")
+        #endif
+        
+        return firestore
+    }()
     
     func fetchAppointments() async {
         guard let userId = Auth.auth().currentUser?.uid else {

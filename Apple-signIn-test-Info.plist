@@ -29,5 +29,7 @@
 	<string>This app needs microphone access to record voice commands for calendar operations.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>This app uses speech recognition to process voice commands for calendar management.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>This app needs local network access to connect to Firebase development servers during testing.</string>
 </dict>
 </plist>

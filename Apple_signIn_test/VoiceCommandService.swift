@@ -11,6 +11,14 @@ import FirebaseFunctions
 import GoogleSignIn
 import os.log
 
+#if DEBUG
+// Firebase Emulator Configuration
+// Replace with your Mac's IP address (find using: ifconfig | grep "inet " | grep -v 127.0.0.1)
+// Current IP: 192.168.0.13
+private let EMULATOR_HOST = "192.168.0.13"
+private let EMULATOR_PORT = 5002
+#endif
+
 struct VoiceCommandRequest: Codable {
     let command: String
 }
@@ -85,7 +93,20 @@ class VoiceCommandService: ObservableObject {
         }
     }
     
-    private lazy var functions = Functions.functions()
+    private lazy var functions: Functions = {
+        let functions = Functions.functions()
+        
+        #if DEBUG
+        // Use local Firebase emulator in debug mode
+        functions.useEmulator(withHost: EMULATOR_HOST, port: EMULATOR_PORT)
+        print("🔧 DEBUG: Using Firebase Functions emulator at \(EMULATOR_HOST):\(EMULATOR_PORT)")
+        #else
+        print("🚀 PRODUCTION: Using Firebase Functions in production")
+        #endif
+        
+        return functions
+    }()
+    
     private let logger = Logger(subsystem: "com.apple.signin.test", category: "VoiceCommandService")
     
     func processCommand(_ command: String) async {
@@ -251,7 +272,11 @@ class VoiceCommandService: ObservableObject {
     }
     
     private func callFirebaseFunction(command: String) async throws -> VoiceCommandResponse {
-        logger.info("Calling Firebase callable function: processVoiceCommand")
+        #if DEBUG
+        logger.info("📍 Calling LOCAL Firebase function: processVoiceCommand (emulator at \(EMULATOR_HOST):\(EMULATOR_PORT))")
+        #else
+        logger.info("☁️ Calling PRODUCTION Firebase function: processVoiceCommand")
+        #endif
         
         // Prepare data for Firebase callable function
         var data: [String: Any] = [

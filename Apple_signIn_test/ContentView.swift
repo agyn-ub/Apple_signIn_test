@@ -272,7 +272,6 @@ struct MainConversationView: View {
                 commandService: commandService,
                 voiceManager: voiceManager
             )
-            .navigationTitle("Voice Calendar")
             .navigationBarTitleDisplayMode(.inline)
             
             // Floating calendar button
@@ -301,18 +300,47 @@ struct MainConversationView: View {
         }
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {
-                // Calendar connection status indicator
+                // Google Calendar connection status indicator
                 Button(action: {
                     if !calendarManager.isConnected {
                         calendarManager.signInWithGoogleForCalendar()
                     }
                 }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: calendarManager.isConnected ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
-                            .foregroundColor(calendarManager.isConnected ? .green : .orange)
-                        Text(calendarManager.isConnected ? "Connected" : "Connect")
-                            .font(.caption)
+                    ZStack {
+                        // Google-style icon with colors
+                        if calendarManager.isConnected {
+                            // Colorful Google-style indicator when connected
+                            Circle()
+                                .fill(
+                                    LinearGradient(
+                                        colors: [
+                                            Color(red: 66/255, green: 133/255, blue: 244/255),  // Google Blue
+                                            Color(red: 234/255, green: 67/255, blue: 53/255),   // Google Red
+                                            Color(red: 251/255, green: 188/255, blue: 5/255),   // Google Yellow
+                                            Color(red: 52/255, green: 168/255, blue: 83/255)    // Google Green
+                                        ],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                                .frame(width: 28, height: 28)
+                            
+                            Image(systemName: "g.circle")
+                                .font(.system(size: 20, weight: .bold))
+                                .foregroundColor(.white)
+                        } else {
+                            // Gray indicator when not connected
+                            Circle()
+                                .fill(Color(.systemGray4))
+                                .frame(width: 28, height: 28)
+                            
+                            Image(systemName: "g.circle")
+                                .font(.system(size: 20, weight: .medium))
+                                .foregroundColor(.gray)
+                        }
                     }
+                    .scaleEffect(calendarManager.isLoading ? 0.9 : 1.0)
+                    .animation(.easeInOut(duration: 0.2), value: calendarManager.isLoading)
                 }
                 .disabled(calendarManager.isLoading)
             }

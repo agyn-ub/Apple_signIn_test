@@ -35,9 +35,6 @@ struct ConversationView: View {
     
     private var mainContentView: some View {
         VStack(spacing: 0) {
-            // Header with assistant info
-            ChatHeaderView()
-            
             // Conversation Messages
             ScrollViewReader { proxy in
                     ScrollView {
@@ -193,32 +190,6 @@ struct ConversationView: View {
             showQuickResponses = false
             quickResponseType = .none
         }
-    }
-}
-
-// MARK: - Chat Header
-struct ChatHeaderView: View {
-    var body: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 8) {
-                    Circle()
-                        .fill(Color.green)
-                        .frame(width: 8, height: 8)
-                    Text("Calendar Assistant")
-                        .font(.headline)
-                        .fontWeight(.semibold)
-                }
-                Text("I can help you manage your calendar and schedule")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-            Spacer()
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 12)
-        .background(Color(.systemBackground))
-        .border(Color(.systemGray5), width: 0.5)
     }
 }
 
