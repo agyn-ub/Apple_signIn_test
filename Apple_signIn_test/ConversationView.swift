@@ -101,7 +101,11 @@ struct ConversationView: View {
                         }
                         .padding(.top, 16)
                         .padding(.bottom, 100) // Space for input
+                        .onTapGesture {
+                            hideKeyboard()
+                        }
                     }
+                    .scrollDismissesKeyboard(.interactively)
                     .onChange(of: commandService.conversationHistory.count) { _ in
                         scrollToBottom(proxy: proxy)
                         // Check if we should show quick responses
@@ -190,6 +194,10 @@ struct ConversationView: View {
             showQuickResponses = false
             quickResponseType = .none
         }
+    }
+    
+    private func hideKeyboard() {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
 }
 

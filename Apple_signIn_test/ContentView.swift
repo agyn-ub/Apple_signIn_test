@@ -278,37 +278,11 @@ struct MainConversationView: View {
     private let logger = Logger(subsystem: "com.apple.signin.test", category: "MainConversationView")
     
     var body: some View {
-        ZStack {
-            ConversationView(
-                commandService: commandService,
-                voiceManager: voiceManager
-            )
-            .navigationBarTitleDisplayMode(.inline)
-            
-            // Floating calendar button
-            VStack {
-                Spacer()
-                HStack {
-                    Spacer()
-                    Button(action: {
-                        showingAppointments = true
-                    }) {
-                        ZStack {
-                            Circle()
-                                .fill(Color.blue)
-                                .frame(width: 56, height: 56)
-                                .shadow(color: .black.opacity(0.2), radius: 4, y: 2)
-                            
-                            Image(systemName: "calendar")
-                                .font(.system(size: 24, weight: .semibold))
-                                .foregroundColor(.white)
-                        }
-                    }
-                    .padding(.trailing, 20)
-                    .padding(.bottom, 100) // Above the input area
-                }
-            }
-        }
+        ConversationView(
+            commandService: commandService,
+            voiceManager: voiceManager
+        )
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {
                 // Google Calendar connection status indicator
@@ -356,8 +330,17 @@ struct MainConversationView: View {
                 .disabled(calendarManager.isLoading)
             }
             
-            ToolbarItem(placement: .navigationBarTrailing) {
-                // Sign Out button - now visible
+            ToolbarItemGroup(placement: .navigationBarTrailing) {
+                // Calendar button
+                Button(action: {
+                    showingAppointments = true
+                }) {
+                    Image(systemName: "calendar")
+                        .font(.system(size: 20, weight: .medium))
+                        .foregroundColor(.blue)
+                }
+                
+                // Sign Out button
                 Button("Sign Out") {
                     authManager.signOut()
                 }
