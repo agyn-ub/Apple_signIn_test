@@ -44,6 +44,10 @@ struct ContentView: View {
                         .onAppear {
                             // Connect the managers
                             authManager.calendarManager = calendarManager
+                            // Check calendar connection immediately when showing main view
+                            Task {
+                                await calendarManager.checkServerStoredAuth()
+                            }
                         }
                 }
             } else {
@@ -54,6 +58,13 @@ struct ContentView: View {
         .onAppear {
             // Connect the managers once at startup
             authManager.calendarManager = calendarManager
+            
+            // Check calendar connection immediately on app launch
+            if authManager.isSignedIn {
+                Task {
+                    await calendarManager.checkServerStoredAuth()
+                }
+            }
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active && authManager.isSignedIn {
