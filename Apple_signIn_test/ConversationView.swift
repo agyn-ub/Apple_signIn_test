@@ -482,6 +482,305 @@ struct TypingIndicatorView: View {
     }
 }
 
+// MARK: - Recording Waveform Animation
+struct RecordingWaveform: View {
+    @State private var animationAmounts = [CGFloat](repeating: 0.5, count: 5)
+    private let timer = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
+    
+    var body: some View {
+        HStack(spacing: 3) {
+            ForEach(0..<5) { index in
+                Capsule()
+                    .fill(Color.white.opacity(0.8))
+                    .frame(width: 3, height: CGFloat.random(in: 10...25) * animationAmounts[index])
+                    .animation(
+                        .easeInOut(duration: Double.random(in: 0.3...0.5))
+                        .repeatForever(autoreverses: true),
+                        value: animationAmounts[index]
+                    )
+            }
+        }
+        .onReceive(timer) { _ in
+            for i in 0..<5 {
+                animationAmounts[i] = CGFloat.random(in: 0.3...1.0)
+            }
+        }
+    }
+}
+
+// MARK: - Recording Timer Display
+struct RecordingTimerView: View {
+    let duration: TimeInterval
+    
+    private var formattedTime: String {
+        let minutes = Int(duration) / 60
+        let seconds = Int(duration) % 60
+        return String(format: "%02d:%02d", minutes, seconds)
+    }
+    
+    var body: some View {
+        Text(formattedTime)
+            .font(.system(size: 14, weight: .medium, design: .monospaced))
+            .foregroundColor(.white)
+    }
+}
+
+// MARK: - Enhanced Push to Talk Voice Button
+struct PushToTalkButton: View {
+    @ObservedObject var voiceManager: VoiceRecognitionManager
+    @ObservedObject var commandService: VoiceCommandService
+    let onVoiceCommand: (String) -> Void
+    
+    @State private var isPressed = false
+    @State private var isLocked = false
+    @State private var dragOffset: CGSize = .zero
+    @State private var recordingStartTime: Date?
+    @State private var recordingDuration: TimeInterval = 0
+    @State private var timer: Timer?
+    @State private var lastInteractionTime: Date?
+    @State private var showPulse = false
+    @State private var pulseAnimation = false
+    
+    private let cancelThreshold: CGFloat = -100
+    private let lockThreshold: CGFloat = -80  // Slide up to lock
+    private let interactionCooldown: TimeInterval = 0.3
+    
+    var body: some View {
+        ZStack {
+            // Pulse animation layers when recording
+            if isPressed || isLocked {
+                Circle()
+                    .stroke(Color.red.opacity(0.3), lineWidth: 2)
+                    .frame(width: 80, height: 80)
+                    .scaleEffect(pulseAnimation ? 1.3 : 1.0)
+                    .opacity(pulseAnimation ? 0 : 0.5)
+                    .animation(
+                        .easeOut(duration: 1.5)
+                        .repeatForever(autoreverses: false),
+                        value: pulseAnimation
+                    )
+                
+                Circle()
+                    .stroke(Color.red.opacity(0.2), lineWidth: 2)
+                    .frame(width: 80, height: 80)
+                    .scaleEffect(pulseAnimation ? 1.5 : 1.0)
+                    .opacity(pulseAnimation ? 0 : 0.3)
+                    .animation(
+                        .easeOut(duration: 1.5)
+                        .repeatForever(autoreverses: false)
+                        .delay(0.2),
+                        value: pulseAnimation
+                    )
+            }
+            
+            // Main button
+            ZStack {
+                // Background with gradient
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: (isPressed || isLocked) ? [Color.red, Color.red.opacity(0.8)] : [Color.blue, Color.blue.opacity(0.8)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: (isPressed || isLocked) ? 65 : 56, height: (isPressed || isLocked) ? 65 : 56)
+                    .shadow(color: (isPressed || isLocked) ? Color.red.opacity(0.5) : Color.blue.opacity(0.3), 
+                            radius: (isPressed || isLocked) ? 10 : 5, 
+                            x: 0, y: 2)
+                
+                // Icon or waveform
+                if isPressed || isLocked {
+                    RecordingWaveform()
+                } else {
+                    Image(systemName: "mic.fill")
+                        .font(.system(size: 24, weight: .semibold))
+                        .foregroundColor(.white)
+                }
+            }
+            .scaleEffect((isPressed || isLocked) ? 1.1 : 1.0)
+            .animation(.spring(response: 0.3, dampingFraction: 0.6, blendDuration: 0), value: isPressed)
+            .animation(.spring(response: 0.3, dampingFraction: 0.6, blendDuration: 0), value: isLocked)
+            
+            // Lock indicator when sliding up
+            if dragOffset.height < lockThreshold && isPressed {
+                VStack {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(.white)
+                        .padding(8)
+                        .background(Circle().fill(Color.orange))
+                        .offset(y: -45)
+                    Spacer()
+                }
+            }
+            
+            // Cancel indicator when sliding left
+            if dragOffset.width < -50 && isPressed {
+                HStack {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 20, weight: .medium))
+                        .foregroundColor(.white)
+                        .padding(8)
+                        .background(Circle().fill(Color.red))
+                        .offset(x: -45)
+                    Spacer()
+                }
+            }
+        }
+        .offset(x: isLocked ? 0 : dragOffset.width, y: isLocked ? 0 : dragOffset.height)
+        .opacity(dragOffset.width < cancelThreshold ? 0.3 : 1.0)
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { value in
+                    if !isPressed && !isLocked {
+                        // Start recording on press
+                        startRecording()
+                    }
+                    
+                    if !isLocked {
+                        // Update drag offset for visual feedback
+                        dragOffset = value.translation
+                        
+                        // Check if user is trying to lock (slide up)
+                        if value.translation.height < lockThreshold && isPressed {
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        }
+                        
+                        // Check if user is trying to cancel (slide left)
+                        if value.translation.width < -50 {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        }
+                    }
+                }
+                .onEnded { value in
+                    if !isLocked {
+                        // Check if should lock (slid up)
+                        if value.translation.height < lockThreshold && isPressed {
+                            lockRecording()
+                        }
+                        // Check if cancelled (slid left)
+                        else if value.translation.width < cancelThreshold {
+                            cancelRecording()
+                        } else {
+                            // Stop and send recording
+                            stopAndSendRecording()
+                        }
+                        
+                        // Reset visual state
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+                            dragOffset = .zero
+                        }
+                    }
+                }
+        )
+        .disabled(commandService.isLoading || (!isLocked && voiceManager.isRecording && !isPressed))
+        .onTapGesture {
+            // Handle tap when locked to stop
+            if isLocked {
+                stopAndSendRecording()
+            }
+        }
+        .onAppear {
+            pulseAnimation = true
+        }
+    }
+    
+    private func startRecording() {
+        guard !isPressed else { return }
+        
+        // Check cooldown to prevent rapid triggers
+        if let lastTime = lastInteractionTime {
+            let timeSinceLastInteraction = Date().timeIntervalSince(lastTime)
+            if timeSinceLastInteraction < interactionCooldown {
+                return
+            }
+        }
+        
+        // Prevent starting if already recording
+        guard !voiceManager.isRecording else { return }
+        
+        isPressed = true
+        recordingStartTime = Date()
+        lastInteractionTime = Date()
+        
+        // Haptic feedback
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        
+        // Start voice recording
+        Task {
+            if !voiceManager.hasPermission {
+                await voiceManager.requestPermissions()
+            }
+            if voiceManager.hasPermission {
+                voiceManager.startRecording()
+                
+                // Start duration timer
+                await MainActor.run {
+                    timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
+                        if let startTime = recordingStartTime {
+                            recordingDuration = Date().timeIntervalSince(startTime)
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    private func stopAndSendRecording() {
+        guard isPressed || isLocked else { return }
+        
+        isPressed = false
+        isLocked = false
+        timer?.invalidate()
+        timer = nil
+        recordingDuration = 0
+        recordingStartTime = nil
+        lastInteractionTime = Date()
+        
+        // Haptic feedback
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        
+        // Stop recording and automatically send
+        voiceManager.stopRecording()
+        
+        // The transcribed text will be processed via onRecordingFinished callback
+    }
+    
+    private func cancelRecording() {
+        guard isPressed || isLocked else { return }
+        
+        isPressed = false
+        isLocked = false
+        timer?.invalidate()
+        timer = nil
+        recordingDuration = 0
+        recordingStartTime = nil
+        
+        // Haptic feedback for cancel
+        UINotificationFeedbackGenerator().notificationOccurred(.warning)
+        
+        // Stop recording without sending
+        voiceManager.stopRecording()
+        voiceManager.clearTranscription()
+    }
+    
+    private func lockRecording() {
+        guard isPressed else { return }
+        
+        isLocked = true
+        isPressed = false
+        
+        // Strong haptic for lock
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        
+        // Reset drag offset
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+            dragOffset = .zero
+        }
+    }
+}
+
 // MARK: - Modern Chat Input
 struct ChatInputView: View {
     @Binding var textInput: String
@@ -491,31 +790,61 @@ struct ChatInputView: View {
     let onVoiceCommand: (String) -> Void
     
     @FocusState private var isTextFieldFocused: Bool
+    @State private var showCancelHint = false
+    @State private var recordingDuration: TimeInterval = 0
+    @State private var recordingTimer: Timer?
+    @State private var recordingStartTime: Date?
     
     var body: some View {
         VStack(spacing: 0) {
-            // Show recording indicator if recording
+            // Enhanced recording indicator
             if voiceManager.isRecording {
-                HStack(spacing: 8) {
-                    Circle()
-                        .fill(Color.red)
-                        .frame(width: 8, height: 8)
-                        .scaleEffect(voiceManager.isListening ? 1.2 : 0.8)
-                        .animation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true), value: voiceManager.isListening)
+                HStack(spacing: 16) {
+                    // Recording timer
+                    RecordingTimerView(duration: recordingDuration)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Capsule().fill(Color.red))
+                        .transition(.scale.combined(with: .opacity))
                     
-                    Text("Recording... Tap mic to stop")
-                        .font(.caption)
-                        .foregroundColor(.red)
+                    Spacer()
+                    
+                    // Visual hints with icons
+                    HStack(spacing: 12) {
+                        // Lock hint
+                        HStack(spacing: 4) {
+                            Image(systemName: "lock.fill")
+                                .font(.system(size: 10))
+                            Image(systemName: "arrow.up")
+                                .font(.system(size: 10))
+                        }
+                        .foregroundColor(.gray)
+                        
+                        Text("•")
+                            .foregroundColor(.gray)
+                        
+                        // Cancel hint
+                        HStack(spacing: 4) {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 10))
+                            Image(systemName: "arrow.left")
+                                .font(.system(size: 10))
+                        }
+                        .foregroundColor(.gray)
+                    }
+                    .font(.caption)
+                    .opacity(0.7)
                 }
                 .padding(.horizontal, 20)
                 .padding(.vertical, 8)
+                .animation(.easeInOut(duration: 0.3), value: voiceManager.isRecording)
             }
             
             // Input row
             HStack(spacing: 12) {
                 // Text input with modern styling
                 HStack(spacing: 8) {
-                    TextField("Message Calendar Assistant...", text: $textInput, axis: .vertical)
+                    TextField("Message...", text: $textInput, axis: .vertical)
                         .focused($isTextFieldFocused)
                         .lineLimit(1...6)
                         .font(.body)
@@ -523,32 +852,12 @@ struct ChatInputView: View {
                             onSendMessage()
                         }
                     
-                    // Voice button - now starts recording immediately
-                    Button(action: {
-                        if isTextFieldFocused {
-                            isTextFieldFocused = false
-                        }
-                        
-                        if voiceManager.isRecording {
-                            // Stop recording
-                            voiceManager.stopRecording()
-                        } else {
-                            // Start recording immediately
-                            Task {
-                                if !voiceManager.hasPermission {
-                                    await voiceManager.requestPermissions()
-                                }
-                                if voiceManager.hasPermission {
-                                    voiceManager.startRecording()
-                                }
-                            }
-                        }
-                    }) {
-                        Image(systemName: voiceManager.isRecording ? "stop.circle.fill" : "mic.fill")
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundColor(voiceManager.isRecording ? .red : .blue)
-                    }
-                    .disabled(commandService.isLoading)
+                    // Push-to-talk voice button
+                    PushToTalkButton(
+                        voiceManager: voiceManager,
+                        commandService: commandService,
+                        onVoiceCommand: onVoiceCommand
+                    )
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
@@ -595,6 +904,24 @@ struct ChatInputView: View {
                 }
                 .padding(.horizontal, 20)
                 .padding(.bottom, 8)
+            }
+        }
+        .onReceive(voiceManager.$isRecording) { isRecording in
+            if isRecording {
+                // Start timer when recording starts
+                recordingStartTime = Date()
+                recordingDuration = 0
+                recordingTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
+                    if let startTime = recordingStartTime {
+                        recordingDuration = Date().timeIntervalSince(startTime)
+                    }
+                }
+            } else {
+                // Stop timer when recording stops
+                recordingTimer?.invalidate()
+                recordingTimer = nil
+                recordingDuration = 0
+                recordingStartTime = nil
             }
         }
         .onReceive(voiceManager.$transcribedText) { text in

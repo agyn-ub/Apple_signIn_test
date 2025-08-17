@@ -29,6 +29,11 @@ class VoiceRecognitionManager: NSObject, ObservableObject {
     private var lastValidTranscription = ""
     private var hasProcessedCurrentCommand = false
     
+    // Recording state management
+    private var isStartingRecording = false
+    private var lastRecordingStop: Date?
+    private let minimumRecordingInterval: TimeInterval = 0.5
+    
     // Callback for when recording is finished and text is ready
     var onRecordingFinished: ((String) -> Void)?
     
@@ -43,8 +48,13 @@ class VoiceRecognitionManager: NSObject, ObservableObject {
     override init() {
         super.init()
         logger.info("VoiceRecognitionManager initializing")
+        initializeSpeechRecognizer()
+    }
+    
+    private func initializeSpeechRecognizer() {
         speechRecognizer = SFSpeechRecognizer()
         speechRecognizer?.delegate = self
+        logger.info("Speech recognizer initialized")
     }
     
     func requestPermissions() async {
@@ -91,6 +101,26 @@ class VoiceRecognitionManager: NSObject, ObservableObject {
         print("🔐 Authorization status: \(isAuthorized)")
         logger.info("Starting recording process")
         
+        // Prevent rapid restarts
+        guard !isStartingRecording else {
+            print("⚠️ Already starting recording, ignoring duplicate request")
+            logger.warning("Already starting recording, ignoring duplicate request")
+            return
+        }
+        
+        // Check minimum interval between recordings
+        if let lastStop = lastRecordingStop {
+            let timeSinceLastStop = Date().timeIntervalSince(lastStop)
+            if timeSinceLastStop < minimumRecordingInterval {
+                print("⚠️ Too soon after last recording, waiting...")
+                logger.warning("Recording attempted too soon after last stop")
+                return
+            }
+        }
+        
+        isStartingRecording = true
+        defer { isStartingRecording = false }
+        
         // Reset processing flag for new transcription
         hasProcessedCurrentCommand = false
         
@@ -119,6 +149,9 @@ class VoiceRecognitionManager: NSObject, ObservableObject {
         
         print("✅ Speech recognizer is available and ready")
         logger.info("Speech recognizer is available and ready")
+        
+        // Clean up any existing audio setup
+        cleanupAudioResources()
         
         // Reset any existing task
         if recognitionTask != nil {
@@ -177,6 +210,14 @@ class VoiceRecognitionManager: NSObject, ObservableObject {
         print("🎧 Audio format: \(recordingFormat)")
         logger.info("Audio input node format: \(recordingFormat)")
         
+        // CRITICAL: Remove any existing tap before installing new one
+        if inputNode.numberOfInputs > 0 {
+            inputNode.removeTap(onBus: 0)
+            print("🔄 Removed existing audio tap")
+            logger.info("Removed existing audio tap before installing new one")
+        }
+        
+        // Install new tap
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { buffer, _ in
             recognitionRequest.append(buffer)
             
@@ -226,10 +267,13 @@ class VoiceRecognitionManager: NSObject, ObservableObject {
                     print("🔇 No speech detected (normal)")
                     return
                 } else if errorDomain == "kAFAssistantErrorDomain" && errorCode == 1101 {
-                    // Local speech recognition service error - try to restart
-                    print("🔄 Local speech recognition service error - attempting restart")
+                    // Local speech recognition service error - this is a known iOS issue
+                    // Don't show error to user, just log it
+                    print("🔄 Local speech recognition service error 1101 (known iOS issue) - will auto-recover")
                     Task { @MainActor in
-                        self.restartSpeechRecognition()
+                        self.logger.info("Speech recognition error 1101 detected - this is a known iOS issue and will auto-recover")
+                        // Don't restart immediately as this can cause more issues
+                        // The system will recover on its own
                     }
                     return
                 } else {
@@ -290,9 +334,31 @@ class VoiceRecognitionManager: NSObject, ObservableObject {
         logger.info("Recording started successfully")
     }
     
+    private func cleanupAudioResources() {
+        // Stop audio engine if running
+        if audioEngine.isRunning {
+            audioEngine.stop()
+            print("🔄 Stopped audio engine for cleanup")
+        }
+        
+        // Remove any existing audio tap
+        let inputNode = audioEngine.inputNode
+        if inputNode.numberOfInputs > 0 {
+            inputNode.removeTap(onBus: 0)
+            print("🔄 Removed audio tap during cleanup")
+        }
+        
+        // Reset the audio engine
+        audioEngine.reset()
+        print("🔄 Audio engine reset")
+    }
+    
     func stopRecording() {
         print("🛑 Stopping transcription...")
         logger.info("Stopping recording - current state: isRecording=\(self.isRecording), isListening=\(self.isListening)")
+        
+        // Track when we stopped for cooldown
+        lastRecordingStop = Date()
         
         // Ensure we're actually recording before trying to stop
         guard self.isRecording else {
