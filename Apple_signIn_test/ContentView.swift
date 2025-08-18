@@ -18,8 +18,8 @@ struct ContentView: View {
     
     var body: some View {
         Group {
-            if authManager.isLoading && !authManager.isSignedIn {
-                // Show loading state only during initial authentication check
+            if authManager.isRestoringSession && !authManager.isSignedIn {
+                // Show loading state only during initial session restoration
                 VStack(spacing: 20) {
                     ProgressView()
                         .progressViewStyle(CircularProgressViewStyle())

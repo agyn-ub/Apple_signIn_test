@@ -21,6 +21,7 @@ class AuthenticationManager: NSObject, ObservableObject {
     @Published var errorMessage: String?
     @Published var linkedProviders: [String] = []
     @Published var sessionExpired = false
+    @Published var isRestoringSession = false // Separate flag for session restoration
     
     private var currentNonce: String? // For Apple Sign In security
     private var lastActivityTime = Date()
@@ -58,9 +59,21 @@ class AuthenticationManager: NSObject, ObservableObject {
     // MARK: - Session Restoration
     @MainActor
     func checkAndRestorePreviousSession() async {
-        // Mark as loading while checking for previous session
-        isLoading = true
-        defer { isLoading = false }
+        // Use separate flag for session restoration to not block sign-in buttons
+        isRestoringSession = true
+        
+        // Add timeout protection - clear restoration state after 5 seconds max
+        Task {
+            try? await Task.sleep(nanoseconds: 5_000_000_000) // 5 seconds
+            if isRestoringSession {
+                print("Session restoration timeout - clearing restoration state")
+                isRestoringSession = false
+            }
+        }
+        
+        defer { 
+            isRestoringSession = false 
+        }
         
         // First check if Firebase has a valid session
         guard let currentUser = Auth.auth().currentUser else {
@@ -87,22 +100,8 @@ class AuthenticationManager: NSObject, ObservableObject {
             
             // If we have Google provider, restore Google Sign-In session
             if linkedProviders.contains("google.com") {
-                // Restore Google Sign-In session if available
-                GIDSignIn.sharedInstance.restorePreviousSignIn { [weak self] user, error in
-                    Task { @MainActor in
-                        if let user = user {
-                            print("Successfully restored Google Sign-In session for: \(user.profile?.email ?? "unknown")")
-                            // Check calendar connection status after Google restoration
-                            if let calendarManager = self?.calendarManager {
-                                await calendarManager.checkServerStoredAuth()
-                            }
-                        } else if let error = error {
-                            print("Failed to restore Google Sign-In session: \(error.localizedDescription)")
-                        } else {
-                            print("No previous Google Sign-In session to restore")
-                        }
-                    }
-                }
+                // Restore Google Sign-In session using async/await
+                await restoreGoogleSignInSession()
             }
             
             print("Successfully restored authentication session")
@@ -112,6 +111,29 @@ class AuthenticationManager: NSObject, ObservableObject {
             self.user = nil
             self.isSignedIn = false
             self.linkedProviders = []
+        }
+    }
+    
+    // Separate method for Google Sign-In restoration with proper async handling
+    @MainActor
+    private func restoreGoogleSignInSession() async {
+        await withCheckedContinuation { continuation in
+            GIDSignIn.sharedInstance.restorePreviousSignIn { [weak self] user, error in
+                Task { @MainActor in
+                    if let user = user {
+                        print("Successfully restored Google Sign-In session for: \(user.profile?.email ?? "unknown")")
+                        // Check calendar connection status after Google restoration
+                        if let calendarManager = self?.calendarManager {
+                            await calendarManager.checkServerStoredAuth()
+                        }
+                    } else if let error = error {
+                        print("Failed to restore Google Sign-In session: \(error.localizedDescription)")
+                    } else {
+                        print("No previous Google Sign-In session to restore")
+                    }
+                    continuation.resume()
+                }
+            }
         }
     }
     
