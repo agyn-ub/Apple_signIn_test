@@ -100,7 +100,7 @@ struct ConversationView: View {
                             }
                         }
                         .padding(.top, 16)
-                        .padding(.bottom, 100) // Space for input
+                        .padding(.bottom, 140) // Increased space for input and typing indicator
                         .onTapGesture {
                             hideKeyboard()
                         }
@@ -113,7 +113,12 @@ struct ConversationView: View {
                     }
                     .onChange(of: commandService.isLoading) { _ in
                         if commandService.isLoading {
-                            scrollToBottom(proxy: proxy)
+                            // Add a small delay to ensure the typing indicator is rendered
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                withAnimation(.easeOut(duration: 0.3)) {
+                                    proxy.scrollTo("typing-indicator", anchor: .bottom)
+                                }
+                            }
                         }
                     }
                 }
@@ -156,17 +161,16 @@ struct ConversationView: View {
     
     private func scrollToBottom(proxy: ScrollViewProxy) {
         if showQuickResponses {
-            withAnimation(.easeOut(duration: 0.3)) {
+            withAnimation(.easeOut(duration: 0.2)) {
                 proxy.scrollTo("quick-responses", anchor: UnitPoint.bottom)
             }
         } else if let lastMessage = commandService.conversationHistory.last {
-            withAnimation(.easeOut(duration: 0.3)) {
+            withAnimation(.easeOut(duration: 0.2)) {
                 proxy.scrollTo(lastMessage.id, anchor: UnitPoint.bottom)
             }
         } else if commandService.isLoading {
-            withAnimation(.easeOut(duration: 0.3)) {
-                proxy.scrollTo("typing-indicator", anchor: UnitPoint.bottom)
-            }
+            // Use simpler animation for typing indicator
+            proxy.scrollTo("typing-indicator", anchor: UnitPoint.bottom)
         }
     }
     
@@ -434,7 +438,7 @@ struct ModernAppointmentCard: View {
 
 // MARK: - Typing Indicator
 struct TypingIndicatorView: View {
-    @State private var animationPhase = 0
+    @State private var isAnimating = false
     
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -463,12 +467,13 @@ struct TypingIndicatorView: View {
                         Circle()
                             .fill(Color.gray)
                             .frame(width: 8, height: 8)
-                            .scaleEffect(animationPhase == index ? 1.2 : 0.8)
+                            .opacity(isAnimating ? 0.3 : 1.0)
+                            .scaleEffect(isAnimating ? 0.8 : 1.0)
                             .animation(
                                 .easeInOut(duration: 0.6)
                                 .repeatForever(autoreverses: true)
-                                .delay(Double(index) * 0.2),
-                                value: animationPhase
+                                .delay(Double(index) * 0.15),
+                                value: isAnimating
                             )
                     }
                 }
@@ -476,42 +481,45 @@ struct TypingIndicatorView: View {
                 .padding(.vertical, 12)
                 .background(Color(.systemGray6))
                 .cornerRadius(18)
+                .drawingGroup() // Optimize rendering performance
             }
             
             Spacer(minLength: 48)
         }
         .id("typing-indicator")
         .onAppear {
-            animationPhase = 0
-            Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { _ in
-                animationPhase = (animationPhase + 1) % 3
-            }
+            isAnimating = true
+        }
+        .onDisappear {
+            isAnimating = false
         }
     }
 }
 
 // MARK: - Recording Waveform Animation
 struct RecordingWaveform: View {
-    @State private var animationAmounts = [CGFloat](repeating: 0.5, count: 5)
-    private let timer = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
+    @State private var isAnimating = false
     
     var body: some View {
         HStack(spacing: 3) {
             ForEach(0..<5) { index in
                 Capsule()
                     .fill(Color.white.opacity(0.8))
-                    .frame(width: 3, height: CGFloat.random(in: 10...25) * animationAmounts[index])
+                    .frame(width: 3, height: isAnimating ? 20 : 12)
                     .animation(
-                        .easeInOut(duration: Double.random(in: 0.3...0.5))
-                        .repeatForever(autoreverses: true),
-                        value: animationAmounts[index]
+                        .easeInOut(duration: 0.5)
+                        .repeatForever(autoreverses: true)
+                        .delay(Double(index) * 0.1),
+                        value: isAnimating
                     )
             }
         }
-        .onReceive(timer) { _ in
-            for i in 0..<5 {
-                animationAmounts[i] = CGFloat.random(in: 0.3...1.0)
-            }
+        .drawingGroup() // Optimize rendering
+        .onAppear {
+            isAnimating = true
+        }
+        .onDisappear {
+            isAnimating = false
         }
     }
 }
@@ -555,30 +563,19 @@ struct PushToTalkButton: View {
     
     var body: some View {
         ZStack {
-            // Pulse animation layers when recording
+            // Simplified pulse animation when recording
             if isPressed || isLocked {
                 Circle()
-                    .stroke(Color.red.opacity(0.3), lineWidth: 2)
+                    .stroke(Color.red.opacity(0.25), lineWidth: 2)
                     .frame(width: 80, height: 80)
-                    .scaleEffect(pulseAnimation ? 1.3 : 1.0)
-                    .opacity(pulseAnimation ? 0 : 0.5)
+                    .scaleEffect(pulseAnimation ? 1.4 : 1.0)
+                    .opacity(pulseAnimation ? 0 : 0.4)
                     .animation(
-                        .easeOut(duration: 1.5)
+                        .easeOut(duration: 2.0)
                         .repeatForever(autoreverses: false),
                         value: pulseAnimation
                     )
-                
-                Circle()
-                    .stroke(Color.red.opacity(0.2), lineWidth: 2)
-                    .frame(width: 80, height: 80)
-                    .scaleEffect(pulseAnimation ? 1.5 : 1.0)
-                    .opacity(pulseAnimation ? 0 : 0.3)
-                    .animation(
-                        .easeOut(duration: 1.5)
-                        .repeatForever(autoreverses: false)
-                        .delay(0.2),
-                        value: pulseAnimation
-                    )
+                    .drawingGroup() // Optimize rendering
             }
             
             // Main button
